@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 mass = float(input("Please enter the mass: "))
-velocity = np.array([0,5,10,20])
+velocity = np.arange(0,21,5)
 kinetic_energy = 0.5 * mass * velocity**2
 
 fig, ax = plt.subplots()
