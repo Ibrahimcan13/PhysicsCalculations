@@ -9,7 +9,7 @@ x = np.linspace(0, 4 * np.pi, 1000)
 fig, ax = plt.subplots(figsize=(10,6))
 
 ax.set_xlim(0, 4* np.pi)
-ax.set_ylim(-A -0.5, A+ 0.5)
+ax.set_ylim(-2*A -0.5, 2*A+ 0.5)
 
 line, = ax.plot([], [], lw=1.5, color='red')
 fig.patch.set_facecolor('black')
