@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 b= float(input("Enter damped force: "))
 m=float(input("Enter mass: "))
 gamma = b / (2*m)
@@ -17,14 +16,12 @@ radian = np.radians(degree)
 time = float(input("Enter time: "))
 t = np.linspace(0,time, 1000)
 
-
 #Theoric Values
 x_theorical=  A * np.cos(omega_d *t + radian)
 v_theorical= -A * omega_d * np.sin(omega_d *t + radian)
 a_theorical= -(omega_d**2) * x_theorical
 
 #Real Values
-
 x_real = A * np.exp(-gamma * t) * np.cos(omega_d *t + radian)
 v_real = -A * np.exp(-gamma * t) * (gamma * np.cos(omega_d *t + radian) + np.sin(omega_d *t + radian)*omega_d)
 a_real = A * np.exp(-gamma * t) * (((gamma**2 - omega_d**2) * np.cos(omega_d *t + radian)) + (2 * gamma * omega_d * np.sin(omega_d *t + radian)))
