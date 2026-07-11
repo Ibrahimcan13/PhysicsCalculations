@@ -7,7 +7,7 @@ omega = 0.0
 damping = float(input('Enter damping rate: '))
 deg_theta = float(input("Enter the degree: "))
 theta = np.radians(deg_theta)
-L = float(input("Enter the length: "))
+L = float(input("Enter the L: "))
 
 fig, ax = plt.subplots()
 ax.set_xlim(-20,20)

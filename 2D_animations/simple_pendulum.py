@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
 g = 9.81
-L = float(input("Enter the length of the rope :"))
+L = float(input("Enter the L of the rope :"))
 theta0 = float(input("Enter the angle of the rope:"))
 rad_theta = np.radians(theta0)
 

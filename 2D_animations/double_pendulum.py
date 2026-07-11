@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-L1 = L2 =  float(input("Enter the length of the pendulums: "))
+L1 = L2 =  float(input("Enter the L of the pendulums: "))
 m1 = float(input("Enter the mass of the first object: "))
 m2 = float(input("Enter the mass of the second object: "))
 
