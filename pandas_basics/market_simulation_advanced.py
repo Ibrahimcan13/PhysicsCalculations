@@ -25,17 +25,13 @@ df["Sector_Mean"] = mean_prices
 
 df["Decision"] = df.apply(advanced_decision, axis=1)
 
-print(df[["Symbol", "Price", "Sector_Mean", "Decision"]])
-
 sector_avg = df.groupby("Sector")["Price"].mean()
 sector_max = df.groupby("Sector")["Price"].max()
-
-print(" Sector Performance Analysis (Average Price) ")
-print(sector_avg)
-print("\n Highest Price per Sector ")
-print(sector_max)
 
 df_sorted = df.sort_values(by="Sector")
 print("\n Data Sorted by Sector")
 print(df_sorted)
+
+df.to_csv("trading_report.csv", index=False)
+print("\n[SUCCESS] Report 'trading_report.csv' has been generated.")
 
