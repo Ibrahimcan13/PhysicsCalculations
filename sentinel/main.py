@@ -1,29 +1,40 @@
-from analysis import load_market_data, calculate_signals, save_signals_to_csv
-from visualizer import plot_market_data 
+from data_loader import fetch_market_data, save_data_to_csv
+from visualizer import plot_signals
+from analysis import (
+    calculate_moving_average,
+    add_rsi,
+    generate_signals,
+    calculate_performance,
+    calculate_pnl
+)
 
-def main():
-    print(" Sentinel Market Tracker Initiated ")
+def run_sentinel():
 
-    data_file = "data.csv"
-    output_file = "sentinel_signals.csv"
+    ticker = "RACE"
+    start_date = "2026-01-01"
+    end_date = "2026-07-17"
 
-    market_df = load_market_data(data_file)
+    df = fetch_market_data(ticker, start_date, end_date)
 
-    if not market_df.empty:
-        processed_df = calculate_signals(market_df)
+    if df.empty:
+        print("[Error] Pipeline aborted: No data retrieved.")
+        return
 
-        print("\n Processed Market Data with Sentinel Signals ")
-        print(processed_df)
+    save_data_to_csv(df, f"{ticker}_data.csv")
 
-        if save_signals_to_csv(processed_df, output_file):
-            print("\n Generating Market Visualizations ")
-            plot_market_data(output_file)
+    df = calculate_moving_average(df, window=20)
+    df = add_rsi(df, window=14)
+    df = generate_signals(df, window=20)
 
-    else:
-        print("[ERROR] No data available to process.")
+    plot_signals(df)
 
-    print("\n Sentinel Execution Finished")
+    trade_log = calculate_performance(df)
+    total_pnl = calculate_pnl(trade_log)
+
+    print(f"\n--- SENTINEL STATUS ---")
+    print(f"Total Trade Signals: {len(trade_log)}")
+    print(f"Total PnL: {total_pnl:.2f}")
 
 
 if __name__ == "__main__":
-    main()
+    run_sentinel()

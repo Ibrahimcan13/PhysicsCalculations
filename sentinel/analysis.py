@@ -1,56 +1,62 @@
 import pandas as pd
 
-def load_market_data(file_path: str) -> pd.DataFrame:
-    """Loads market data from a CSV file and returns a Pandas DataFrame."""
-    try:
-        df = pd.read_csv(file_path)
-        print(f"[SUCCESS] Data successfully loaded from: {file_path}")
-        return df
-    except FileNotFoundError:
-        print(f"[ERROR] The file at {file_path} was not found.")
-        return pd.DataFrame()
-    except Exception as e:
-        print(f"[ERROR] An unexpected error occurred while loading data: {e}")
-        return pd.DataFrame()
-
-
-def calculate_signals(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculates BUY/SELL/HOLD signals based on price deviation AND volume filter."""
-    if df.empty or "Price" not in df.columns or "Volume" not in df.columns:
-        print("[WARNING] Cannot calculate signals. DataFrame is empty or required columns are missing.")
-        return df
-
-    avg_price = df["Price"].mean()
-    avg_volume = df["Volume"].mean()
-
-    print(f"[ANALYSIS] Global Average Price: {avg_price:.3f}")
-    print(f"[ANALYSIS] Global Average Volume: {avg_volume:.2f}")
-
-    def get_smart_signal(row):
-        price = row["Price"]
-        volume = row["Volume"]
-
-        if volume > avg_volume:
-            if price < avg_price * 0.98:
-                return "BUY"
-            elif price > avg_price * 1.02:
-                return "SELL"
-
-        return "HOLD"
-
-    df["Signal"] = df.apply(get_smart_signal, axis=1)
+def calculate_moving_average(df: pd.DataFrame, window: int = 20):
+    df[f'SMA_{window}'] = df['Close'].rolling(window=window).mean()
+    df[f'Vol_SMA_{window}'] = df['Volume'].rolling(window=window).mean()
+    print(f"[Sentinel] Calculated {window}-day Moving Average and Volume SMA.")
     return df
 
-def save_signals_to_csv(df: pd.DataFrame, output_path: str) -> bool:
-    """Saves the processed DataFrame with signals to a CSV file."""
-    if df.empty:
-        print("[WARNING] DataFrame is empty. Nothing to save.")
-        return False
-    try:
 
-        df.to_csv(output_path, index=False)
-        print(f"[SUCCESS] Signals successfully saved to: {output_path}")
-        return True
-    except Exception as e:
-        print(f"[ERROR] Failed to save signals to CSV: {e}")
-        return False
+def add_rsi(df: pd.DataFrame, window: int = 14):
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    print(f"[Sentinel] RSI indicator added (window={window}).")
+    return df
+
+
+def get_dynamic_margin(df: pd.DataFrame, window: int = 20):
+    """Calculates dynamic margin based on standard deviation of closing prices."""
+    std_dev = df['Close'].rolling(window=window).std()
+    margin = std_dev / df[f'SMA_{window}']
+    return margin.clip(0.01, 0.05)
+
+
+def generate_signals(df: pd.DataFrame, window: int = 20):
+    sma_col = f'SMA_{window}'
+    vol_sma_col = f'Vol_SMA_{window}'
+    margins = get_dynamic_margin(df, window)
+
+    def get_signal(row):
+        price = row['Close']
+        sma = row[sma_col]
+        margin = margins[row.name]
+        volume = row['Volume']
+        vol_sma = row[vol_sma_col]
+        rsi = row['RSI']
+
+        if price < sma * (1 - margin) and volume > vol_sma and rsi < 30:
+            return "BUY"
+        elif price > sma * (1 + margin) and volume > vol_sma and rsi > 70:
+            return "SELL"
+        return "HOLD"
+
+    df['Signal'] = df.apply(get_signal, axis=1)
+    print("[Sentinel] Signals generated with Dynamic Margin & RSI confirmation.")
+    return df
+
+
+def calculate_performance(df: pd.DataFrame):
+    trades = df[df['Signal'] != 'HOLD'].copy()
+    print(f"[Sentinel] Performance analysis ready. Found {len(trades)} trade signals.")
+    return trades
+
+
+def calculate_pnl(trades: pd.DataFrame):
+    trades['PnL'] = trades['Close'].diff()
+    total_pnl = trades[trades['Signal'] == 'SELL']['PnL'].sum()
+    print(f"[Sentinel] Total PnL calculated: {total_pnl:.2f}")
+    return total_pnl
