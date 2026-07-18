@@ -1,28 +1,62 @@
 import matplotlib.pyplot as plt
+import pandas as pd
 
 
-def plot_signals(df):
+def plot_signals(df: pd.DataFrame, ticker: str, window: int, total_signals: int, total_pnl: float):
+    """
+    Plots the historical price, SMA, Bollinger Bands, and Buy/Sell signals.
+    Adds a dynamic summary table inside the chart area.
+    """
+
     plt.style.use('dark_background')
-    fig, ax1 = plt.subplots(figsize=(14, 8))
 
-    ax1.plot(df.index, df['Close'], label='Price', color='white', zorder=2, alpha=0.7)
-    ax1.plot(df.index, df['SMA_20'], label='SMA 20', color='yellow', linestyle='--', zorder=3)
+    fig, ax = plt.subplots(2, 1, figsize=(14, 8), sharex=True,
+                           gridspec_kw={'height_ratios': [3, 1]})
+
+    ax[0].plot(df.index, df['Close'], label='Price', color='lightgray', alpha=0.8, linewidth=1.5)
+    ax[0].plot(df.index, df[f'SMA_{window}'], label=f'SMA {window}', color='gold', linestyle='--', linewidth=1.5)
+    ax[0].plot(df.index, df[f'BB_Upper_{window}'], label='BB Upper', color='purple', linestyle=':', alpha=0.7)
+    ax[0].plot(df.index, df[f'BB_Lower_{window}'], label='BB Lower', color='purple', linestyle=':', alpha=0.7)
+
+    ax[0].fill_between(df.index, df[f'BB_Upper_{window}'], df[f'BB_Lower_{window}'],
+                       color='cyan', alpha=0.03, label='BB Range')
 
     buy_signals = df[df['Signal'] == 'BUY']
     sell_signals = df[df['Signal'] == 'SELL']
 
-    ax1.scatter(buy_signals.index, buy_signals['Close'], color='lime', marker='^', label='BUY', zorder=5, s=100)
-    ax1.scatter(sell_signals.index, sell_signals['Close'], color='red', marker='v', label='SELL', zorder=5, s=100)
+    ax[0].scatter(buy_signals.index, buy_signals['Close'],
+                  label='BUY', color='lime', marker='^', s=120, zorder=5)
+    ax[0].scatter(sell_signals.index, sell_signals['Close'],
+                  label='SELL', color='red', marker='v', s=120, zorder=5)
 
-    ax1.set_ylabel('Price', color='white')
-    ax1.legend(loc='upper left')
+    ax[0].set_title(f"Sentinel: {ticker} Market Analysis (Signals & Volatility)", fontsize=14, pad=15)
+    ax[0].set_ylabel("Price (USD)", fontsize=11)
+    ax[0].grid(True, linestyle=':', alpha=0.3)
+    ax[0].legend(loc='upper left', framealpha=0.5)
 
-    ax2 = ax1.twinx()
-    ax2.bar(df.index, df['Volume'], color='skyblue', alpha=0.4, label='Volume', zorder=1)
-    ax2.set_ylabel('Volume', color='gray')
-    ax2.set_ylim(0, df['Volume'].max() * 3)
+    table_data = [
+        ["Asset Ticker", ticker],
+        ["Total Signals", str(total_signals)],
+        ["Realized PnL", f"{total_pnl:.3f}"]
+    ]
 
-    plt.title('Sentinel: Ferrari Analysis (Signals & Volume)', fontsize=14)
-    plt.grid(True, alpha=0.1)
+    summary_table = ax[0].table(
+        cellText=table_data,
+        cellLoc='center',
+        loc='upper right',
+        bbox=[0.75, 0.65, 0.22, 0.25]
+    )
+
+    summary_table.auto_set_font_size(False)
+    summary_table.set_fontsize(10)
+    for (row, col), cell in summary_table.get_celld().items():
+        cell.set_facecolor('#1e1e1e')
+        cell.set_text_props(color='white', weight='bold')
+        cell.set_edgecolor('#444444')
+
+    ax[1].bar(df.index, df['Volume'], color='skyblue', alpha=0.4, width=0.8, label='Volume')
+    ax[1].set_ylabel("Volume", fontsize=11)
+    ax[1].grid(True, linestyle=':', alpha=0.3)
+
     plt.tight_layout()
     plt.show()
