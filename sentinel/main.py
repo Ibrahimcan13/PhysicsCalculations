@@ -1,14 +1,8 @@
 from datetime import datetime
+from analysis import (add_bollinger_bands, add_rsi, calculate_moving_average, calculate_performance, calculate_pnl, generate_signals,)
 from data_loader import fetch_market_data, save_data_to_csv
 from visualizer import plot_signals
-from analysis import (
-    calculate_moving_average,
-    add_rsi,
-    add_bollinger_bands,
-    generate_signals,
-    calculate_performance,
-    calculate_pnl
-)
+
 
 def get_valid_date(prompt: str) -> datetime:
     """Prompts the user for a date and validates the YYYY-MM-DD format."""
@@ -18,17 +12,22 @@ def get_valid_date(prompt: str) -> datetime:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             return dt
         except ValueError:
-            print("[Error] Invalid format! Please use YYYY-MM-DD (e.g., 2026-01-01).")
+            print(
+                "[Error] Invalid format! Please use YYYY-MM-DD (e.g., 2026-01-01)."
+            )
+
 
 def run_sentinel():
-    print("   PROJECT SENTINEL: SECURITY PIPELINE   ")
+    print("=== PROJECT SENTINEL: SECURITY PIPELINE ===")
 
-    user_ticker = input("Enter asset ticker (e.g., RACE, AAPL): ").strip().upper()
+    user_ticker = (
+        input("Enter asset ticker (e.g., RACE, AAPL): ").strip().upper()
+    )
     if not user_ticker:
         print("[Error] Ticker cannot be empty. Aborting.")
         return
 
-    print("\n Date Configuration ")
+    print("\n--- Date Configuration ---")
     today = datetime.now()
 
     while True:
@@ -36,7 +35,9 @@ def run_sentinel():
         end_dt = get_valid_date("Enter End Date (YYYY-MM-DD): ")
 
         if start_dt > today or end_dt > today:
-            print("[Security Alert] Dates cannot be in the future! Today is current.")
+            print(
+                "[Security Alert] Dates cannot be in the future! Today is current."
+            )
             print(f"Current System Date: {today.strftime('%Y-%m-%d')}\n")
             continue
 
@@ -46,8 +47,12 @@ def run_sentinel():
 
         days_difference = (end_dt - start_dt).days
         if days_difference < 20:
-            print(f"[Security Alert] Date range is too short ({days_difference} days).")
-            print("Sentinel requires AT LEAST 20 days of data to compute SMA and Bollinger Bands!\n")
+            print(
+                f"[Security Alert] Date range is too short ({days_difference} days)."
+            )
+            print(
+                "Sentinel requires AT LEAST 20 days of data to compute SMA and Bollinger Bands!\n"
+            )
             continue
 
         break
@@ -56,7 +61,9 @@ def run_sentinel():
     end_date = end_dt.strftime("%Y-%m-%d")
     window_size = 20
 
-    print(f"\n[Sentinel] Validation Successful! Processing {user_ticker} from {start_date} to {end_date}...")
+    print(
+        f"\n[Sentinel] Validation Successful! Processing {user_ticker} from {start_date} to {end_date}..."
+    )
 
     df = fetch_market_data(user_ticker, start_date, end_date)
     if df.empty:
@@ -72,10 +79,10 @@ def run_sentinel():
     df = generate_signals(df, window=window_size)
 
     trade_log = calculate_performance(df)
-    total_pnl = calculate_pnl(trade_log)
+    total_pnl = calculate_pnl(df)
     total_signals = len(trade_log)
 
-    plot_signals(df, ticker=user_ticker, window=window_size, total_signals=total_signals, total_pnl=total_pnl)
+    plot_signals(df, ticker=user_ticker, window=window_size,   total_signals=total_signals,total_pnl=total_pnl, )
 
     print(f"\n SENTINEL STATUS REPORT")
     print(f"Target Asset       : {user_ticker}")
