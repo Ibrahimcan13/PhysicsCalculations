@@ -1,6 +1,19 @@
+from datetime import datetime
 import os
 import pandas as pd
 import yfinance as yf
+
+
+def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Removes weekend data and completely empty rows from the DataFrame."""
+    if df.empty:
+        return df
+
+    df = df[df.index.dayofweek < 5]
+
+    df = df.dropna(how="all")
+
+    return df
 
 
 def fetch_market_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -12,18 +25,16 @@ def fetch_market_data(ticker: str, start_date: str, end_date: str) -> pd.DataFra
 
         if df.empty:
             print(
-                f"[Error] No data returned for ticker '{ticker}'. Please check the symbol or date range."
-            )
+                f"[Error] No data returned for ticker '{ticker}'. Please check the symbol or date range.")
             return pd.DataFrame()
 
-        # Flattens MultiIndex column headers if present
         df.columns = [
-            col[0] if isinstance(col, tuple) else col for col in df.columns
-        ]
+            col[0] if isinstance(col, tuple) else col for col in df.columns]
+
+        df = clean_market_data(df)
 
         print(
-            f"[Sentinel] Successfully downloaded {len(df)} rows of data for {ticker}."
-        )
+            f"[Sentinel] Successfully downloaded {len(df)} rows of data for {ticker}.")
         return df
 
     except Exception as e:
@@ -32,24 +43,31 @@ def fetch_market_data(ticker: str, start_date: str, end_date: str) -> pd.DataFra
 
 
 def save_data_to_csv(
-    df: pd.DataFrame, filename: str, folder: str = "data"
-) -> None:
-    """Saves the fetched DataFrame to a local CSV file for caching with safety checks."""
+    df: pd.DataFrame, ticker: str, filename: str = None, folder: str = "data") -> str:
+    """Saves the fetched DataFrame to a local CSV file with clean naming and rounded values."""
     if df.empty:
         print("[Warning] DataFrame is empty. Aborting local save operation.")
-        return
+        return ""
 
     try:
         os.makedirs(folder, exist_ok=True)
+
+        if not filename:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+            filename = f"{ticker}_{timestamp}.csv"
+
         filepath = os.path.join(folder, filename)
 
-        df.to_csv(filepath)
+        df.round(2).to_csv(filepath)
         print(f"[Sentinel] Data successfully cached locally at: {filepath}")
+        return filepath
 
     except IOError as e:
         print(f"[Error] Disk I/O failed. Could not write file to disk: {e}")
+        return ""
     except Exception as e:
         print(f"[Error] Unexpected error during save operation: {e}")
+        return ""
 
 
 def load_local_data(filename: str, folder: str = "data") -> pd.DataFrame:
