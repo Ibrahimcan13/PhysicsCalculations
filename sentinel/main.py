@@ -1,5 +1,13 @@
 from datetime import datetime
-from analysis import (add_bollinger_bands,  add_rsi, calculate_moving_average, calculate_performance,calculate_pnl, generate_signals)
+from analysis import (
+    add_bollinger_bands,
+    add_rsi,
+    add_trend_predictor,
+    calculate_moving_average,
+    calculate_performance,
+    calculate_pnl,
+    generate_signals,
+)
 from data_loader import fetch_market_data, save_data_to_csv
 from visualizer import plot_signals
 
@@ -18,7 +26,8 @@ def get_valid_date(prompt: str) -> datetime:
 def get_valid_window_size(default: int = 20) -> int:
     """Prompts the user for a window size with fallback to default."""
     window_str = input(
-        f"Enter analysis window size in days [Press Enter for Default: {default}]: ").strip()
+        f"Enter analysis window size in days [Press Enter for Default: {default}]: "
+    ).strip()
 
     if not window_str:
         print(f"[Sentinel] Using default window size: {default} days.")
@@ -72,7 +81,8 @@ def run_sentinel():
     end_date = end_dt.strftime("%Y-%m-%d")
 
     print(
-        f"\n[Sentinel] Validation Successful! Processing {user_ticker} (Window: {window_size}d) from {start_date} to {end_date}...")
+        f"\n[Sentinel] Validation Successful! Processing {user_ticker} (Window: {window_size}d) from {start_date} to {end_date}..."
+    )
 
     df = fetch_market_data(user_ticker, start_date, end_date)
     if df.empty:
@@ -85,14 +95,20 @@ def run_sentinel():
     df = calculate_moving_average(df, window=window_size)
     df = add_rsi(df, window=14)
     df = add_bollinger_bands(df, window=window_size, num_std=2.0)
+
+    df, predictor_metrics = add_trend_predictor(df, train_ratio=0.8)
+
     df = generate_signals(df, window=window_size)
-
     trade_log = calculate_performance(df)
-
     metrics = calculate_pnl(df, commission_rate=0.001)
 
-    plot_signals(df,ticker=user_ticker,window=window_size,metrics=metrics)
-
+    plot_signals(
+        df,
+        ticker=user_ticker,
+        window=window_size,
+        metrics=metrics,
+        predictor_metrics=predictor_metrics
+    )
 
     print(f"\n SENTINEL STATUS REPORT")
     print(f"Target Asset       : {user_ticker}")
@@ -102,6 +118,7 @@ def run_sentinel():
     print(f"Win Rate           : %{metrics['win_rate']:.1f}")
     print(f"Max Drawdown       : %{metrics['max_drawdown']:.2f}")
     print(f"Net Realized PnL   : {metrics['total_pnl']:.2f} USD")
+    print(f"Trend Test RMSE    : ${predictor_metrics['rmse']:.2f}")
 
 
 if __name__ == "__main__":
