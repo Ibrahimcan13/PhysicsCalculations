@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 
 
-
 def calculate_moving_average(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     """Calculates Simple Moving Average (SMA) for price and volume."""
     df[f"SMA_{window}"] = df["Close"].rolling(window=window).mean()
@@ -53,15 +52,15 @@ def add_bollinger_bands(df: pd.DataFrame, window: int = 20, num_std: float = 2.0
     return df
 
 
-
-def add_trend_predictor(df: pd.DataFrame, train_ratio: float = 0.8) -> tuple[pd.DataFrame, dict]:
+def add_trend_predictor(df: pd.DataFrame, train_ratio: float = 0.8, future_days: int = 15) -> tuple[pd.DataFrame, dict]:
     """
     Fits a linear trend line on the training portion of historical data (default 80%)
-    and projects the trend into the test set. Calculates Root Mean Squared Error (RMSE).
+    and projects the trend into the test set AND N days into the future.
+    Calculates Root Mean Squared Error (RMSE).
     """
     if df.empty or "Close" not in df.columns:
         print("[Warning] DataFrame is empty or missing 'Close'. Skipping predictor.")
-        return df, {"rmse": 0.0}
+        return df, {"rmse": 0.0, "future_df": pd.DataFrame()}
 
     df_clean = df.dropna(subset=["Close"]).copy()
     n = len(df_clean)
@@ -76,6 +75,13 @@ def add_trend_predictor(df: pd.DataFrame, train_ratio: float = 0.8) -> tuple[pd.
     trend_predictions = np.polyval(poly, x)
     df_clean["Trend_Predictor"] = trend_predictions
 
+    x_future = np.arange(n, n + future_days)
+    y_future = np.polyval(poly, x_future)
+
+    last_date = df_clean.index[-1]
+    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=future_days, freq='B')
+    future_df = pd.DataFrame({"Trend_Future": y_future}, index=future_dates)
+
     y_test = y[train_size:]
     pred_test = trend_predictions[train_size:]
 
@@ -84,9 +90,15 @@ def add_trend_predictor(df: pd.DataFrame, train_ratio: float = 0.8) -> tuple[pd.
     else:
         rmse = 0.0
 
-    print(f"[Sentinel] Linear Predictor fitted on {train_ratio*100:.0f}% data. Test RMSE: ${rmse:.2f}")
+    print(
+        f"[Sentinel] Linear Predictor fitted on {train_ratio * 100:.0f}% data. Test RMSE: ${rmse:.2f} | Future Projection: {future_days} days.")
 
-    predictor_metrics = {"rmse": rmse,"split_index": train_size,"split_date": df_clean.index[train_size] if train_size < n else df_clean.index[-1]}
+    predictor_metrics = {
+        "rmse": rmse,
+        "split_index": train_size,
+        "split_date": df_clean.index[train_size] if train_size < n else df_clean.index[-1],
+        "future_df": future_df
+    }
 
     return df_clean, predictor_metrics
 
@@ -144,12 +156,15 @@ def calculate_performance(df: pd.DataFrame) -> pd.DataFrame:
 
 def calculate_pnl(df: pd.DataFrame, commission_rate: float = 0.001) -> dict:
     """
-    Calculates Realized Net PnL considering transaction fees (commission/slippage),
-    computes advanced strategy metrics, and returns time-indexed equity curve.
+    Calculates Realized Net PnL considering transaction fees, auto-closes open positions
+    at the last closing price, computes advanced strategy metrics, and returns time-indexed equity curve.
     """
     trades = df[df["Signal"] != "HOLD"].copy()
     if trades.empty:
-        return {"total_pnl": 0.0,"win_rate": 0.0,"total_trades": 0,"winning_trades": 0,"max_drawdown": 0.0,"equity_curve": pd.Series([100.0], index=[df.index[0] if not df.empty else 0])
+        return {
+            "total_pnl": 0.0, "win_rate": 0.0, "total_trades": 0,
+            "winning_trades": 0, "max_drawdown": 0.0,
+            "equity_curve": pd.Series([100.0], index=[df.index[0] if not df.empty else 0])
         }
 
     total_pnl = 0.0
@@ -173,6 +188,18 @@ def calculate_pnl(df: pd.DataFrame, commission_rate: float = 0.001) -> dict:
             equity_dict[idx] = equity
             buy_price = None
 
+    if buy_price is not None:
+        last_close = df["Close"].iloc[-1]
+        sell_price = last_close * (1 - commission_rate)
+        pnl = sell_price - buy_price
+        total_pnl += pnl
+        trade_results.append(pnl)
+        equity += pnl
+        equity_dict[df.index[-1]] = equity
+        print(
+            f"[Sentinel] Auto-closed open BUY position at last available close price: ${last_close:.2f} (PnL: ${pnl:.2f})")
+
+
     total_completed_trades = len(trade_results)
     winning_trades = sum(1 for pnl in trade_results if pnl > 0)
     win_rate = (winning_trades / total_completed_trades * 100) if total_completed_trades > 0 else 0.0
@@ -183,8 +210,25 @@ def calculate_pnl(df: pd.DataFrame, commission_rate: float = 0.001) -> dict:
     drawdown = (equity_series - peak) / peak
     max_drawdown = drawdown.min() * 100
 
-    metrics = {"total_pnl": total_pnl,"win_rate": win_rate,"total_trades": total_completed_trades,"winning_trades": winning_trades,"max_drawdown": abs(max_drawdown),"equity_curve": equity_series}
+    metrics = {
+        "total_pnl": total_pnl, "win_rate": win_rate, "total_trades": total_completed_trades,
+        "winning_trades": winning_trades, "max_drawdown": abs(max_drawdown), "equity_curve": equity_series
+    }
 
     print(
-        f"[Sentinel] Advanced Metrics Computed -> Net PnL: {total_pnl:.2f} | Win Rate: {win_rate:.1f}% | Max DD: {abs(max_drawdown):.2f}%")
+        f"[Sentinel] Advanced Metrics Computed -> Net PnL: ${total_pnl:.2f} | Win Rate: {win_rate:.1f}% | Max DD: {abs(max_drawdown):.2f}%")
     return metrics
+
+
+def calculate_vectorized_pnl(df: pd.DataFrame) -> pd.Series:
+    """
+    Computes fast vectorized strategy returns using .shift() and .cumsum().
+    Maps BUY=1, SELL=-1 to hold positions continuously until next signal.
+    """
+    signal_numeric = df["Signal"].map({"BUY": 1, "SELL": 0}).ffill().fillna(0)
+    market_returns = df["Close"].pct_change()
+
+    strategy_returns = signal_numeric.shift(1) * market_returns
+    cumulative_returns = (1 + strategy_returns.fillna(0)).cumprod() * 100
+
+    return cumulative_returns

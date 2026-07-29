@@ -11,8 +11,8 @@ def plot_signals(
     save_path: str = None
 ) -> None:
     """
-    Plots historical price, SMA, Bollinger Bands, Linear Trend Predictor, RSI, Volume,
-    Buy/Sell signals, a summary metrics table, and Strategy Equity Curve (Portfolio Balance).
+    Plots historical price, SMA, Bollinger Bands, Linear Trend Predictor, Future Projection,
+    RSI, Volume, Buy/Sell signals, a clean text summary box, and Strategy Equity Curve.
     """
     plt.style.use("dark_background")
 
@@ -44,6 +44,10 @@ def plot_signals(
             split_date = predictor_metrics["split_date"]
             ax[0].axvline(x=split_date, color="crimson", linestyle="--", alpha=0.8, linewidth=1.5, label="Train/Test Split")
 
+    if predictor_metrics and "future_df" in predictor_metrics:
+        future_df = predictor_metrics["future_df"]
+        if not future_df.empty:
+            ax[0].plot(future_df.index, future_df["Trend_Future"], label="Future Projection", color="orange", linewidth=2.0, linestyle="--")
 
     buy_signals = df[df["Signal"] == "BUY"] if "Signal" in df.columns else pd.DataFrame()
     sell_signals = df[df["Signal"] == "SELL"] if "Signal" in df.columns else pd.DataFrame()
@@ -62,25 +66,27 @@ def plot_signals(
     ax[0].grid(True, linestyle=":", alpha=0.3)
     ax[0].legend(loc="upper left", framealpha=0.5)
 
-    table_data = [
-        ["Asset Ticker", ticker],
-        ["Total Trades", str(metrics.get("total_trades", 0))],
-        ["Win Rate", f"%{metrics.get('win_rate', 0.0):.1f}"],
-        ["Max Drawdown", f"%{metrics.get('max_drawdown', 0.0):.2f}"],
-        ["Net PnL", f"${metrics.get('total_pnl', 0.0):.2f}"],
-    ]
+    summary_text = (
+        f"Asset Ticker : {ticker}\n"
+        f"Total Trades : {metrics.get('total_trades', 0)}\n"
+        f"Win Rate     : %{metrics.get('win_rate', 0.0):.1f}\n"
+        f"Max Drawdown : %{metrics.get('max_drawdown', 0.0):.2f}\n"
+        f"Net PnL      : ${metrics.get('total_pnl', 0.0):.2f}"
+    )
 
     if predictor_metrics and "rmse" in predictor_metrics:
-        table_data.append(["Test RMSE", f"${predictor_metrics['rmse']:.2f}"])
+        summary_text += f"\nTest RMSE    : ${predictor_metrics['rmse']:.2f}"
 
-    summary_table = ax[0].table(cellText=table_data, cellLoc="center", loc="upper right", bbox=[0.75, 0.50, 0.22, 0.40])
-    summary_table.auto_set_font_size(False)
-    summary_table.set_fontsize(9)
-
-    for (row, col), cell in summary_table.get_celld().items():
-        cell.set_facecolor("#1e1e1e")
-        cell.set_text_props(color="white", weight="bold")
-        cell.set_edgecolor("#444444")
+    ax[0].text(
+        0.98, 0.95, summary_text,
+        transform=ax[0].transAxes,
+        fontsize=9,
+        fontfamily="monospace",
+        fontweight="bold",
+        verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="#1e1e1e", edgecolor="#444444", alpha=0.85)
+    )
 
     if "RSI" in df.columns:
         ax[1].plot(df.index, df["RSI"], color="magenta", linewidth=1.2, label="RSI")

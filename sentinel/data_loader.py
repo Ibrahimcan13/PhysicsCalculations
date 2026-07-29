@@ -7,14 +7,40 @@ _DATA_CACHE = {}
 
 
 def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Removes weekend data and completely empty rows from the DataFrame."""
+    """
+    Removes weekend data, completely empty rows, and strips timezone info
+    from the DataFrame index for clean alignment.
+    """
     if df.empty:
         return df
+
+    if hasattr(df.index, 'tz') and df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
 
     df = df[df.index.dayofweek < 5]
     df = df.dropna(how="all")
 
     return df
+
+
+def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Finds the common date intersection between two DataFrames to prevent NaN issues
+    during cross-asset operations or comparisons.
+    """
+    if df1.empty or df2.empty:
+        return df1, df2
+
+    common_dates = df1.index.intersection(df2.index)
+
+    if common_dates.empty:
+        print("[Warning] No common dates found between the provided DataFrames.")
+        return pd.DataFrame(), pd.DataFrame()
+
+    df1_aligned = df1.loc[common_dates].copy()
+    df2_aligned = df2.loc[common_dates].copy()
+
+    return df1_aligned, df2_aligned
 
 
 def fetch_market_data(ticker: str, start_date: str = None, end_date: str = None) -> pd.DataFrame:
@@ -95,7 +121,8 @@ def load_local_data(filename: str, folder: str = "data") -> pd.DataFrame:
     try:
         if os.path.exists(filepath):
             print(f"[Sentinel] Loading local data from: {filepath}")
-            return pd.read_csv(filepath, index_col=0, parse_dates=True)
+            df = pd.read_csv(filepath, index_col=0, parse_dates=True)
+            return clean_market_data(df)
         else:
             print(f"[Warning] Local cache file not found at: {filepath}")
             return pd.DataFrame()

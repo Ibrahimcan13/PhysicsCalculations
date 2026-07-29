@@ -96,11 +96,27 @@ def run_sentinel():
     df = add_rsi(df, window=14)
     df = add_bollinger_bands(df, window=window_size, num_std=2.0)
 
-    df, predictor_metrics = add_trend_predictor(df, train_ratio=0.8)
+    df, predictor_metrics = add_trend_predictor(df, train_ratio=0.8, future_days=15)
 
     df = generate_signals(df, window=window_size)
     trade_log = calculate_performance(df)
     metrics = calculate_pnl(df, commission_rate=0.001)
+
+
+    print(f"         SENTINEL STATUS REPORT           ")
+    print(f"Target Asset       : {user_ticker}")
+    print(f"Window Size        : {window_size} days")
+    print(f"Total Trades       : {metrics['total_trades']}")
+    print(f"Winning Trades     : {metrics['winning_trades']}")
+    print(f"Win Rate           : %{metrics['win_rate']:.1f}")
+    print(f"Max Drawdown       : %{metrics['max_drawdown']:.2f}")
+    print(f"Net Realized PnL   : ${metrics['total_pnl']:.2f}")
+    print(f"Trend Test RMSE    : ${predictor_metrics['rmse']:.2f}")
+
+    if "future_df" in predictor_metrics and not predictor_metrics["future_df"].empty:
+        future_df = predictor_metrics["future_df"]
+        print(f"Future Projection  : {len(future_df)} Business Days generated.")
+
 
     plot_signals(
         df,
@@ -109,16 +125,6 @@ def run_sentinel():
         metrics=metrics,
         predictor_metrics=predictor_metrics
     )
-
-    print(f"\n SENTINEL STATUS REPORT")
-    print(f"Target Asset       : {user_ticker}")
-    print(f"Window Size        : {window_size} days")
-    print(f"Total Trades       : {metrics['total_trades']}")
-    print(f"Winning Trades     : {metrics['winning_trades']}")
-    print(f"Win Rate           : %{metrics['win_rate']:.1f}")
-    print(f"Max Drawdown       : %{metrics['max_drawdown']:.2f}")
-    print(f"Net Realized PnL   : {metrics['total_pnl']:.2f} USD")
-    print(f"Trend Test RMSE    : ${predictor_metrics['rmse']:.2f}")
 
 
 if __name__ == "__main__":
