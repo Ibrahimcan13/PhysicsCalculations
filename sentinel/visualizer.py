@@ -3,16 +3,16 @@ import pandas as pd
 
 
 def plot_signals(
-    df: pd.DataFrame,
-    ticker: str,
-    window: int,
-    metrics: dict,
-    predictor_metrics: dict = None,
-    save_path: str = None
+        df: pd.DataFrame,
+        ticker: str,
+        window: int,
+        metrics: dict,
+        predictor_metrics: dict = None,
+        save_path: str = None
 ) -> None:
     """
     Plots historical price, SMA, Bollinger Bands, Linear Trend Predictor, Future Projection,
-    RSI, Volume, Buy/Sell signals, a clean text summary box, and Strategy Equity Curve.
+    RSI, Volume, Buy/Sell signals, and Strategy Equity Curve with trade scatter points.
     """
     plt.style.use("dark_background")
 
@@ -38,16 +38,19 @@ def plot_signals(
         ax[0].fill_between(df.index, df[bb_upper_col], df[bb_lower_col], color="cyan", alpha=0.03, label="BB Range")
 
     if "Trend_Predictor" in df.columns:
-        ax[0].plot(df.index, df["Trend_Predictor"], label="Trend Predictor", color="skyblue", linewidth=1.8, linestyle="-")
+        ax[0].plot(df.index, df["Trend_Predictor"], label="Trend Predictor", color="skyblue", linewidth=1.8,
+                   linestyle="-")
 
         if predictor_metrics and "split_date" in predictor_metrics:
             split_date = predictor_metrics["split_date"]
-            ax[0].axvline(x=split_date, color="crimson", linestyle="--", alpha=0.8, linewidth=1.5, label="Train/Test Split")
+            ax[0].axvline(x=split_date, color="crimson", linestyle="--", alpha=0.8, linewidth=1.5,
+                          label="Train/Test Split")
 
     if predictor_metrics and "future_df" in predictor_metrics:
         future_df = predictor_metrics["future_df"]
         if not future_df.empty:
-            ax[0].plot(future_df.index, future_df["Trend_Future"], label="Future Projection", color="orange", linewidth=2.0, linestyle="--")
+            ax[0].plot(future_df.index, future_df["Trend_Future"], label="Future Projection", color="orange",
+                       linewidth=2.0, linestyle="--")
 
     buy_signals = df[df["Signal"] == "BUY"] if "Signal" in df.columns else pd.DataFrame()
     sell_signals = df[df["Signal"] == "SELL"] if "Signal" in df.columns else pd.DataFrame()
@@ -65,28 +68,6 @@ def plot_signals(
     ax[0].set_ylabel("Price (USD)", fontsize=11)
     ax[0].grid(True, linestyle=":", alpha=0.3)
     ax[0].legend(loc="upper left", framealpha=0.5)
-
-    summary_text = (
-        f"Asset Ticker : {ticker}\n"
-        f"Total Trades : {metrics.get('total_trades', 0)}\n"
-        f"Win Rate     : %{metrics.get('win_rate', 0.0):.1f}\n"
-        f"Max Drawdown : %{metrics.get('max_drawdown', 0.0):.2f}\n"
-        f"Net PnL      : ${metrics.get('total_pnl', 0.0):.2f}"
-    )
-
-    if predictor_metrics and "rmse" in predictor_metrics:
-        summary_text += f"\nTest RMSE    : ${predictor_metrics['rmse']:.2f}"
-
-    ax[0].text(
-        0.98, 0.95, summary_text,
-        transform=ax[0].transAxes,
-        fontsize=9,
-        fontfamily="monospace",
-        fontweight="bold",
-        verticalalignment="top",
-        horizontalalignment="right",
-        bbox=dict(boxstyle="round,pad=0.5", facecolor="#1e1e1e", edgecolor="#444444", alpha=0.85)
-    )
 
     if "RSI" in df.columns:
         ax[1].plot(df.index, df["RSI"], color="magenta", linewidth=1.2, label="RSI")
@@ -112,6 +93,16 @@ def plot_signals(
         equity = metrics["equity_curve"]
         ax[3].plot(equity.index, equity.values, color="gold", linewidth=1.8, label="Portfolio Equity ($)")
         ax[3].axhline(100, linestyle="--", color="gray", alpha=0.5, label="Initial Capital ($100)")
+
+        if not buy_signals.empty:
+            buy_equity = equity.reindex(buy_signals.index).dropna()
+            ax[3].scatter(buy_equity.index, buy_equity.values, color="lime", marker="^", s=60, zorder=5,
+                          label="Buy Execution")
+
+        if not sell_signals.empty:
+            sell_equity = equity.reindex(sell_signals.index).dropna()
+            ax[3].scatter(sell_equity.index, sell_equity.values, color="red", marker="v", s=60, zorder=5,
+                          label="Sell Execution")
 
         ax[3].fill_between(equity.index, equity.values, 100, where=(equity.values >= 100), color="lime", alpha=0.15)
         ax[3].fill_between(equity.index, equity.values, 100, where=(equity.values < 100), color="red", alpha=0.15)

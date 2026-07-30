@@ -52,7 +52,7 @@ def fetch_market_data(ticker: str, start_date: str = None, end_date: str = None)
     if end_date is None:
         end_date = datetime.now().strftime("%Y-%m-%d")
     if start_date is None:
-        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
 
     cache_key = f"{ticker}_{start_date}_{end_date}"
     if cache_key in _DATA_CACHE:

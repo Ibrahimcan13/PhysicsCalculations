@@ -156,55 +156,66 @@ def calculate_performance(df: pd.DataFrame) -> pd.DataFrame:
 
 def calculate_pnl(df: pd.DataFrame, commission_rate: float = 0.001) -> dict:
     """
-    Calculates Realized Net PnL considering transaction fees, auto-closes open positions
-    at the last closing price, computes advanced strategy metrics, and returns time-indexed equity curve.
+    Calculates Realized Net PnL and Mark-to-Market Portfolio Equity Curve (holding open positions
+    accurately across HOLD days). Auto-closes open positions at the last available price.
     """
-    trades = df[df["Signal"] != "HOLD"].copy()
-    if trades.empty:
+    if df.empty or "Signal" not in df.columns:
         return {
             "total_pnl": 0.0, "win_rate": 0.0, "total_trades": 0,
             "winning_trades": 0, "max_drawdown": 0.0,
             "equity_curve": pd.Series([100.0], index=[df.index[0] if not df.empty else 0])
         }
 
+    capital = 100.0
+    cash = capital
+    shares = 0.0
+
     total_pnl = 0.0
-    buy_price = None
     trade_results = []
+    buy_price = None
 
-    equity = 100.0
-    equity_dict = {df.index[0]: equity}
+    equity_list = []
 
-    for idx, row in trades.iterrows():
-        if row["Signal"] == "BUY" and buy_price is None:
-            buy_price = row["Close"] * (1 + commission_rate)
-        elif row["Signal"] == "SELL" and buy_price is not None:
-            sell_price = row["Close"] * (1 - commission_rate)
+    for idx, row in df.iterrows():
+        signal = row["Signal"]
+        close_price = row["Close"]
 
-            pnl = sell_price - buy_price
+        if signal == "BUY" and shares == 0.0:
+            buy_price = close_price * (1 + commission_rate)
+            shares = cash / buy_price
+            cash = 0.0
+
+        elif signal == "SELL" and shares > 0.0:
+            sell_price = close_price * (1 - commission_rate)
+            cash = shares * sell_price
+
+            pnl = (sell_price - buy_price) * shares
             total_pnl += pnl
             trade_results.append(pnl)
 
-            equity += pnl
-            equity_dict[idx] = equity
+            shares = 0.0
             buy_price = None
 
-    if buy_price is not None:
+        current_equity = cash + (shares * close_price if shares > 0.0 else 0.0)
+        equity_list.append(current_equity)
+
+    if shares > 0.0:
         last_close = df["Close"].iloc[-1]
         sell_price = last_close * (1 - commission_rate)
-        pnl = sell_price - buy_price
+        cash = shares * sell_price
+        pnl = (sell_price - buy_price) * shares
         total_pnl += pnl
         trade_results.append(pnl)
-        equity += pnl
-        equity_dict[df.index[-1]] = equity
+        shares = 0.0
+        equity_list[-1] = cash
         print(
             f"[Sentinel] Auto-closed open BUY position at last available close price: ${last_close:.2f} (PnL: ${pnl:.2f})")
-
 
     total_completed_trades = len(trade_results)
     winning_trades = sum(1 for pnl in trade_results if pnl > 0)
     win_rate = (winning_trades / total_completed_trades * 100) if total_completed_trades > 0 else 0.0
 
-    equity_series = pd.Series(equity_dict).reindex(df.index).ffill().fillna(100.0)
+    equity_series = pd.Series(equity_list, index=df.index)
 
     peak = equity_series.cummax()
     drawdown = (equity_series - peak) / peak

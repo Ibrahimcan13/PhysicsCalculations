@@ -2,7 +2,6 @@ from datetime import datetime
 from analysis import (
     add_bollinger_bands,
     add_rsi,
-    add_trend_predictor,
     calculate_moving_average,
     calculate_performance,
     calculate_pnl,
@@ -43,7 +42,7 @@ def get_valid_window_size(default: int = 20) -> int:
 
 
 def run_sentinel():
-    print("PROJECT SENTINEL: SECURITY PIPELINE")
+    print("       PROJECT SENTINEL: SECURITY PIPELINE       ")
 
     user_ticker = input("Enter asset ticker (e.g., RACE, AAPL): ").strip().upper()
     if not user_ticker:
@@ -61,7 +60,7 @@ def run_sentinel():
         end_dt = get_valid_date("Enter End Date (YYYY-MM-DD): ")
 
         if start_dt > today or end_dt > today:
-            print("[Security Alert] Dates cannot be in the future! Today is current.")
+            print("[Security Alert] Dates cannot be in the future!")
             print(f"Current System Date: {today.strftime('%Y-%m-%d')}\n")
             continue
 
@@ -72,7 +71,7 @@ def run_sentinel():
         days_difference = (end_dt - start_dt).days
         if days_difference < window_size:
             print(f"[Security Alert] Date range is too short ({days_difference} days).")
-            print(f"Sentinel requires AT LEAST {window_size} days of data to compute SMA and Bollinger Bands!\n")
+            print(f"Sentinel requires AT LEAST {window_size} days of data to compute indicators!\n")
             continue
 
         break
@@ -88,22 +87,18 @@ def run_sentinel():
     if df.empty:
         return
 
+    df = calculate_moving_average(df, window=window_size)
+    df = add_rsi(df, window=14)
+    df = add_bollinger_bands(df, window=window_size, num_std=2.0)
+    df = generate_signals(df, window=window_size)
+
+    trade_log = calculate_performance(df)
+    metrics = calculate_pnl(df, commission_rate=0.001)
+
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     dynamic_filename = f"{user_ticker}_{timestamp}.csv"
     save_data_to_csv(df, dynamic_filename)
 
-    df = calculate_moving_average(df, window=window_size)
-    df = add_rsi(df, window=14)
-    df = add_bollinger_bands(df, window=window_size, num_std=2.0)
-
-    df, predictor_metrics = add_trend_predictor(df, train_ratio=0.8, future_days=15)
-
-    df = generate_signals(df, window=window_size)
-    trade_log = calculate_performance(df)
-    metrics = calculate_pnl(df, commission_rate=0.001)
-
-
-    print(f"         SENTINEL STATUS REPORT           ")
     print(f"Target Asset       : {user_ticker}")
     print(f"Window Size        : {window_size} days")
     print(f"Total Trades       : {metrics['total_trades']}")
@@ -111,19 +106,13 @@ def run_sentinel():
     print(f"Win Rate           : %{metrics['win_rate']:.1f}")
     print(f"Max Drawdown       : %{metrics['max_drawdown']:.2f}")
     print(f"Net Realized PnL   : ${metrics['total_pnl']:.2f}")
-    print(f"Trend Test RMSE    : ${predictor_metrics['rmse']:.2f}")
-
-    if "future_df" in predictor_metrics and not predictor_metrics["future_df"].empty:
-        future_df = predictor_metrics["future_df"]
-        print(f"Future Projection  : {len(future_df)} Business Days generated.")
 
 
     plot_signals(
         df,
         ticker=user_ticker,
         window=window_size,
-        metrics=metrics,
-        predictor_metrics=predictor_metrics
+        metrics=metrics
     )
 
 
