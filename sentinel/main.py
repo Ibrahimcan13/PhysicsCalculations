@@ -8,6 +8,7 @@ from analysis import (
     generate_signals,
 )
 from data_loader import fetch_market_data, save_data_to_csv
+from predictor import train_and_predict
 from visualizer import plot_signals
 
 
@@ -22,14 +23,14 @@ def get_valid_date(prompt: str) -> datetime:
             print("[Error] Invalid format! Please use YYYY-MM-DD (e.g., 2026-01-01).")
 
 
-def get_valid_window_size(default: int = 20) -> int:
-    """Prompts the user for a window size with fallback to default."""
+def get_valid_window_size(prompt: str, default: int) -> int:
+    """Prompts the user for a custom window size with fallback to default."""
     window_str = input(
-        f"Enter analysis window size in days [Press Enter for Default: {default}]: "
+        f"{prompt} [Press Enter for Default: {default}]: "
     ).strip()
 
     if not window_str:
-        print(f"[Sentinel] Using default window size: {default} days.")
+        print(f"[Sentinel] Using default size: {default} days.")
         return default
 
     if window_str.isdigit() and int(window_str) > 0:
@@ -37,7 +38,7 @@ def get_valid_window_size(default: int = 20) -> int:
         print(f"[Sentinel] Window size set to: {window_size} days.")
         return window_size
     else:
-        print(f"[Warning] Invalid input. Falling back to default window size: {default} days.")
+        print(f"[Warning] Invalid input. Falling back to default: {default} days.")
         return default
 
 
@@ -49,10 +50,11 @@ def run_sentinel():
         print("[Error] Ticker cannot be empty. Aborting.")
         return
 
-    print("\n--- Configuration ---")
-    window_size = get_valid_window_size(default=20)
+    print("\n Configuration ")
+    window_size = get_valid_window_size("Enter analysis SMA window size in days", default=20)
+    rsi_window = get_valid_window_size("Enter RSI window size in days", default=14)
 
-    print("\n--- Date Configuration ---")
+    print("\n Date Configuration ")
     today = datetime.now()
 
     while True:
@@ -69,9 +71,10 @@ def run_sentinel():
             continue
 
         days_difference = (end_dt - start_dt).days
-        if days_difference < window_size:
+        min_required = max(window_size, rsi_window)
+        if days_difference < min_required:
             print(f"[Security Alert] Date range is too short ({days_difference} days).")
-            print(f"Sentinel requires AT LEAST {window_size} days of data to compute indicators!\n")
+            print(f"Sentinel requires AT LEAST {min_required} days of data to compute indicators!\n")
             continue
 
         break
@@ -80,7 +83,7 @@ def run_sentinel():
     end_date = end_dt.strftime("%Y-%m-%d")
 
     print(
-        f"\n[Sentinel] Validation Successful! Processing {user_ticker} (Window: {window_size}d) from {start_date} to {end_date}..."
+        f"\n[Sentinel] Validation Successful! Processing {user_ticker} (SMA: {window_size}d, RSI: {rsi_window}d) from {start_date} to {end_date}..."
     )
 
     df = fetch_market_data(user_ticker, start_date, end_date)
@@ -88,10 +91,14 @@ def run_sentinel():
         return
 
     df = calculate_moving_average(df, window=window_size)
-    df = add_rsi(df, window=14)
+    df = add_rsi(df, window=rsi_window)
     df = add_bollinger_bands(df, window=window_size, num_std=2.0)
-    df = generate_signals(df, window=window_size)
 
+    print("\n AI Engine")
+    df = train_and_predict(df, forecast_days=5)
+
+    print("\nBacktest Engine ")
+    df = generate_signals(df, window=window_size)
     trade_log = calculate_performance(df)
     metrics = calculate_pnl(df, commission_rate=0.001)
 
@@ -99,14 +106,15 @@ def run_sentinel():
     dynamic_filename = f"{user_ticker}_{timestamp}.csv"
     save_data_to_csv(df, dynamic_filename)
 
+    print("          SENTINEL STATUS REPORT         ")
     print(f"Target Asset       : {user_ticker}")
-    print(f"Window Size        : {window_size} days")
+    print(f"Analysis Window    : SMA {window_size}d | RSI {rsi_window}d")
     print(f"Total Trades       : {metrics['total_trades']}")
     print(f"Winning Trades     : {metrics['winning_trades']}")
     print(f"Win Rate           : %{metrics['win_rate']:.1f}")
     print(f"Max Drawdown       : %{metrics['max_drawdown']:.2f}")
     print(f"Net Realized PnL   : ${metrics['total_pnl']:.2f}")
-
+    print("=" * 45 + "\n")
 
     plot_signals(
         df,

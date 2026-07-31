@@ -6,6 +6,27 @@ import yfinance as yf
 _DATA_CACHE = {}
 
 
+def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
+    """
+    Normalizes yfinance column headers across different library versions
+    and handles MultiIndex flattening cleanly.
+    """
+    if df.empty:
+        return df
+
+    if isinstance(df.columns, pd.MultiIndex):
+        if ticker and ticker in df.columns.levels[1]:
+            df = df.xs(ticker, axis=1, level=1)
+        elif ticker and ticker in df.columns.levels[0]:
+            df = df.xs(ticker, axis=1, level=0)
+        else:
+            df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    else:
+        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+
+    return df
+
+
 def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Removes weekend data, completely empty rows, and strips timezone info
@@ -43,17 +64,8 @@ def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFram
     return df1_aligned, df2_aligned
 
 
-def fetch_market_data(ticker: str, start_date: str = None, end_date: str = None) -> pd.DataFrame:
-    """
-    Fetches historical market data from Yahoo Finance API with error handling.
-    Defaults to the last 1 year if start_date/end_date are not provided.
-    Uses in-memory cache for fast repeated calls.
-    """
-    if end_date is None:
-        end_date = datetime.now().strftime("%Y-%m-%d")
-    if start_date is None:
-        start_date = (datetime.now() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
-
+def _fetch_single_ticker(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """Internal helper to handle single-ticker downloads and caching logic."""
     cache_key = f"{ticker}_{start_date}_{end_date}"
     if cache_key in _DATA_CACHE:
         print(f"[Sentinel] [Cache Hit] Returning memory-cached data for {ticker}...")
@@ -65,29 +77,64 @@ def fetch_market_data(ticker: str, start_date: str = None, end_date: str = None)
         df = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
         if df.empty:
-            print(
-                f"[Error] No data returned for ticker '{ticker}'. Please check the symbol or date range.")
+            print(f"[Error] No data returned for ticker '{ticker}'. Please check symbol or date range.")
             return pd.DataFrame()
 
-        df.columns = [
-            col[0] if isinstance(col, tuple) else col for col in df.columns]
-
+        df = _normalize_yfinance_columns(df, ticker=ticker)
         df = clean_market_data(df)
 
-        print(
-            f"[Sentinel] Successfully downloaded {len(df)} rows of data for {ticker}.")
+        print(f"[Sentinel] Successfully downloaded {len(df)} rows for {ticker}.")
 
         _DATA_CACHE[cache_key] = df.copy()
-
         return df
 
     except Exception as e:
-        print(f"[Error] An unexpected error occurred while fetching data ({type(e).__name__}): {e}")
+        print(f"[Error] An unexpected error occurred while fetching {ticker} ({type(e).__name__}): {e}")
         return pd.DataFrame()
 
 
+def fetch_market_data(
+        tickers: str | list[str],
+        start_date: str = None,
+        end_date: str = None
+) -> pd.DataFrame | dict[str, pd.DataFrame]:
+    """
+    Fetches historical market data for one or multiple tickers from Yahoo Finance API.
+
+    Accepts:
+    - Single string: "AAPL" -> Returns pd.DataFrame
+    - Space/Comma separated string: "AAPL, MSFT" or "AAPL MSFT" -> Returns dict[str, pd.DataFrame]
+    - List of strings: ["AAPL", "MSFT"] -> Returns dict[str, pd.DataFrame]
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+    if start_date is None:
+        start_date = (datetime.now() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
+
+    if isinstance(tickers, str):
+        ticker_list = [t.strip().upper() for t in tickers.replace(",", " ").split() if t.strip()]
+    else:
+        ticker_list = [t.strip().upper() for t in tickers if t.strip()]
+
+    if not ticker_list:
+        print("[Error] No valid ticker symbol provided.")
+        return pd.DataFrame()
+
+    if len(ticker_list) == 1:
+        return _fetch_single_ticker(ticker_list[0], start_date, end_date)
+
+    results = {}
+    for ticker in ticker_list:
+        df = _fetch_single_ticker(ticker, start_date, end_date)
+        if not df.empty:
+            results[ticker] = df
+
+    return results
+
+
 def save_data_to_csv(
-        df: pd.DataFrame, ticker: str, filename: str = None, folder: str = "data") -> str:
+        df: pd.DataFrame, ticker: str, filename: str = None, folder: str = "data"
+) -> str:
     """Saves the fetched DataFrame to a local CSV file with clean naming and rounded values."""
     if df.empty:
         print("[Warning] DataFrame is empty. Aborting local save operation.")
