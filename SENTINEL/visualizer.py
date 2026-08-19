@@ -15,7 +15,6 @@ def plot_signals(
     """
     plt.style.use("dark_background")
 
-    # 5 Subplot Panel: Fiyat, AI Olasılığı, RSI, Hacim, Portföy Değeri
     fig, ax = plt.subplots(
         5, 1,
         figsize=(14, 14),

@@ -114,7 +114,6 @@ def run_sentinel():
     print(f"Win Rate           : %{metrics['win_rate']:.1f}")
     print(f"Max Drawdown       : %{metrics['max_drawdown']:.2f}")
     print(f"Net Realized PnL   : ${metrics['total_pnl']:.2f}")
-    print("=" * 45 + "\n")
 
     plot_signals(
         df,
