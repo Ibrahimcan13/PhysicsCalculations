@@ -2,6 +2,7 @@ from datetime import datetime
 from analysis import (
     add_bollinger_bands,
     add_rsi,
+    calculate_average_true_range,
     calculate_moving_average,
     calculate_performance,
     calculate_pnl,
@@ -43,18 +44,18 @@ def get_valid_window_size(prompt: str, default: int) -> int:
 
 
 def run_sentinel():
-    print("       PROJECT SENTINEL: SECURITY PIPELINE       ")
+    print("       PROJECT SENTINEL      ")
 
     user_ticker = input("Enter asset ticker (e.g., RACE, AAPL): ").strip().upper()
     if not user_ticker:
         print("[Error] Ticker cannot be empty. Aborting.")
         return
 
-    print("\n Configuration ")
+    print("\n[Configuration]")
     window_size = get_valid_window_size("Enter analysis SMA window size in days", default=20)
     rsi_window = get_valid_window_size("Enter RSI window size in days", default=14)
 
-    print("\n Date Configuration ")
+    print("\n[Date Configuration]")
     today = datetime.now()
 
     while True:
@@ -71,7 +72,7 @@ def run_sentinel():
             continue
 
         days_difference = (end_dt - start_dt).days
-        min_required = max(window_size, rsi_window)
+        min_required = max(window_size, rsi_window) + 14
         if days_difference < min_required:
             print(f"[Security Alert] Date range is too short ({days_difference} days).")
             print(f"Sentinel requires AT LEAST {min_required} days of data to compute indicators!\n")
@@ -83,7 +84,8 @@ def run_sentinel():
     end_date = end_dt.strftime("%Y-%m-%d")
 
     print(
-        f"\n[Sentinel] Validation Successful! Processing {user_ticker} (SMA: {window_size}d, RSI: {rsi_window}d) from {start_date} to {end_date}..."
+        f"\n[Sentinel] Validation Successful! Processing {user_ticker} "
+        f"(SMA: {window_size}d, RSI: {rsi_window}d) from {start_date} to {end_date}..."
     )
 
     df = fetch_market_data(user_ticker, start_date, end_date)
@@ -92,12 +94,14 @@ def run_sentinel():
 
     df = calculate_moving_average(df, window=window_size)
     df = add_rsi(df, window=rsi_window)
+    df = calculate_average_true_range(df, window=14)
     df = add_bollinger_bands(df, window=window_size, num_std=2.0)
 
-    print("\n AI Engine")
-    df = train_and_predict(df, forecast_days=5)
+    forecast_days = 5
+    print("\n[AI Engine]")
+    df = train_and_predict(df, forecast_days=forecast_days, train_window=200)
 
-    print("\nBacktest Engine ")
+    print("\n[Backtest Engine]")
     df = generate_signals(df, window=window_size)
     trade_log = calculate_performance(df)
     metrics = calculate_pnl(df, commission_rate=0.001)
@@ -106,20 +110,34 @@ def run_sentinel():
     dynamic_filename = f"{user_ticker}_{timestamp}.csv"
     save_data_to_csv(df, dynamic_filename)
 
+    latest_prob = df["AI_Probability"].iloc[-1] if "AI_Probability" in df.columns else None
+    latest_price = df["Close"].iloc[-1]
+
     print("          SENTINEL STATUS REPORT         ")
     print(f"Target Asset       : {user_ticker}")
-    print(f"Analysis Window    : SMA {window_size}d | RSI {rsi_window}d")
+    print(f"Latest Close Price : ${latest_price:.2f}")
+    print(f"Analysis Window    : SMA {window_size}d | RSI {rsi_window}d | ATR 14d")
     print(f"Total Trades       : {metrics['total_trades']}")
     print(f"Winning Trades     : {metrics['winning_trades']}")
-    print(f"Win Rate           : %{metrics['win_rate']:.1f}")
-    print(f"Max Drawdown       : %{metrics['max_drawdown']:.2f}")
+    print(f"Win Rate           : {metrics['win_rate']:.1f}%")
+    print(f"Max Drawdown       : {metrics['max_drawdown']:.2f}%")
     print(f"Net Realized PnL   : ${metrics['total_pnl']:.2f}")
+
+    if latest_prob is not None:
+        bullish_pct = latest_prob * 100
+        bearish_pct = (1 - latest_prob) * 100
+        direction = "BULLISH" if bullish_pct >= 50 else "BEARISH"
+
+        print(f"AI FORECAST ({forecast_days}-Day Horizon) : {direction}")
+        print(f"Bullish Probability ({forecast_days}d ahead) : {bullish_pct:.1f}%")
+        print(f"Bearish Probability ({forecast_days}d ahead) : {bearish_pct:.1f}%")
 
     plot_signals(
         df,
         ticker=user_ticker,
         window=window_size,
-        metrics=metrics
+        metrics=metrics,
+        train_window=200
     )
 
 

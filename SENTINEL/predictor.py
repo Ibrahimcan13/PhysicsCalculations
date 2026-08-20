@@ -4,10 +4,7 @@ from sklearn.ensemble import RandomForestClassifier
 
 
 def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.DataFrame:
-    """
-    Generates machine learning features from price and technical indicators,
-    and sets the target variable for directional prediction without dropping recent data.
-    """
+
     if df.empty:
         return df
 
@@ -17,6 +14,9 @@ def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.
 
     if "RSI" in data.columns:
         data["Feat_RSI"] = data["RSI"] / 100.0
+
+    if "ATR" in data.columns:
+        data["Feat_ATR_Ratio"] = data["ATR"] / data["Close"]
 
     sma_cols = [col for col in data.columns if col.startswith("SMA_")]
     if len(sma_cols) >= 2:
@@ -36,11 +36,7 @@ def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.
     return cleaned_data
 
 
-def train_and_predict(df: pd.DataFrame, forecast_days: int = 5) -> pd.DataFrame:
-    """
-    Trains a RandomForest model using an 80/20 chronological Train/Test split
-    and appends 'AI_Signal' and 'AI_Probability' columns to the dataframe.
-    """
+def train_and_predict(df: pd.DataFrame, forecast_days: int = 5, train_window: int = 200) -> pd.DataFrame:
     processed_df = create_features_and_targets(df, forecast_days=forecast_days)
 
     if processed_df.empty:
@@ -51,25 +47,29 @@ def train_and_predict(df: pd.DataFrame, forecast_days: int = 5) -> pd.DataFrame:
 
     trainable_df = processed_df.dropna(subset=["Target_Direction"]).copy()
 
-    if len(trainable_df) < 30:
-        print("[Sentinel] Predictor warning: Too few rows for reliable training.")
+    if len(trainable_df) < train_window + 10:
+        print(
+            f"[Sentinel] Predictor warning: Too few rows ({len(trainable_df)}) for rolling window size ({train_window}).")
         return df
 
-    split_idx = int(len(trainable_df) * 0.8)
+    probabilities = [np.nan] * len(processed_df)
 
-    train_data = trainable_df.iloc[:split_idx]
+    for i in range(train_window, len(trainable_df)):
+        train_chunk = trainable_df.iloc[i - train_window: i]
 
-    X_train = train_data[feature_cols]
-    y_train = train_data["Target_Direction"].astype(int)
+        X_train = train_chunk[feature_cols]
+        y_train = train_chunk["Target_Direction"].astype(int)
 
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
+        model = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42)
+        model.fit(X_train, y_train)
 
-    X_all = processed_df[feature_cols]
+        X_test = trainable_df.iloc[[i]][feature_cols]
+        probabilities[i] = model.predict_proba(X_test)[0, 1]
 
-    processed_df["AI_Probability"] = model.predict_proba(X_all)[:, 1]
+    processed_df["AI_Probability"] = probabilities
+    processed_df["AI_Probability"] = processed_df["AI_Probability"].fillna(0.50)
+
     processed_df["AI_Signal"] = (processed_df["AI_Probability"] > 0.55).astype(int)
 
-    print(
-        f"[Sentinel] Predictor model successfully trained (Train size: {len(X_train)}). Features used: {feature_cols}")
+    print(f"[Sentinel] Rolling Walk-Forward completed (Window size: {train_window}). Features: {feature_cols}")
     return processed_df

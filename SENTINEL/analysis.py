@@ -2,7 +2,6 @@ import pandas as pd
 
 
 def calculate_moving_average(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
-    """Calculates Simple Moving Average (SMA) for price and volume."""
     df[f"SMA_{window}"] = df["Close"].rolling(window=window).mean()
     df[f"Vol_SMA_{window}"] = df["Volume"].rolling(window=window).mean()
     print(f"[Sentinel] Calculated {window}-day Moving Average and Volume SMA.")
@@ -10,10 +9,6 @@ def calculate_moving_average(df: pd.DataFrame, window: int = 20) -> pd.DataFrame
 
 
 def add_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
-    """
-    Calculates Relative Strength Index (RSI) using Wilder's Exponential Moving Average (EMA).
-    This provides higher responsiveness to recent price movements compared to SMA.
-    """
     if df.empty or "Close" not in df.columns:
         print("[Warning] DataFrame is empty or missing 'Close' column. Skipping RSI calculation.")
         return df
@@ -33,6 +28,23 @@ def add_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
     return df
 
 
+def calculate_average_true_range(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
+    required_cols = {"High", "Low", "Close"}
+    if df.empty or not required_cols.issubset(df.columns):
+        print(f"[Warning] DataFrame missing required columns {required_cols}. Skipping ATR calculation.")
+        return df
+
+    high_low = df["High"] - df["Low"]
+    high_prev_close = (df["High"] - df["Close"].shift(1)).abs()
+    low_prev_close = (df["Low"] - df["Close"].shift(1)).abs()
+
+    true_range = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
+
+    df["ATR"] = true_range.ewm(alpha=1 / window, adjust=False).mean()
+    print(f"[Sentinel] Calculated {window}-period Average True Range (ATR).")
+    return df
+
+
 def get_dynamic_margin(df: pd.DataFrame, window: int = 20) -> pd.Series:
     """Calculates dynamic volatility margin based on standard deviation of closing prices."""
     sma_col = f"SMA_{window}" if f"SMA_{window}" in df.columns else "Close"
@@ -47,7 +59,6 @@ def get_dynamic_margin(df: pd.DataFrame, window: int = 20) -> pd.Series:
 
 
 def add_bollinger_bands(df: pd.DataFrame, window: int = 20, num_std: float = 2.0) -> pd.DataFrame:
-    """Calculates upper and lower Bollinger Bands based on price standard deviation."""
     sma = df["Close"].rolling(window=window).mean()
     std_dev = df["Close"].rolling(window=window).std()
 
@@ -63,10 +74,6 @@ def generate_signals(
         rsi_lower: float = 30.0,
         rsi_upper: float = 70.0
 ) -> pd.DataFrame:
-    """
-    Generates clean BUY/SELL/HOLD signals using a Position State Machine.
-    Integrates AI Probability if available in the dataframe.
-    """
     sma_col = f"SMA_{window}"
     vol_sma_col = f"Vol_SMA_{window}"
 
@@ -109,17 +116,13 @@ def generate_signals(
 
 
 def calculate_performance(df: pd.DataFrame) -> pd.DataFrame:
-    """Extracts trade signals (excluding HOLD) for evaluation."""
     trades = df[df["Signal"] != "HOLD"].copy()
     print(f"[Sentinel] Performance analysis ready. Found {len(trades)} trade signals.")
     return trades
 
 
 def calculate_pnl(df: pd.DataFrame, commission_rate: float = 0.001) -> dict:
-    """
-    Calculates Realized Net PnL and Mark-to-Market Portfolio Equity Curve.
-    Auto-closes open positions at the last available price.
-    """
+
     if df.empty or "Signal" not in df.columns:
         return {
             "total_pnl": 0.0, "win_rate": 0.0, "total_trades": 0,

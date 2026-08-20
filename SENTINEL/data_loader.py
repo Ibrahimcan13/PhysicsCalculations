@@ -7,10 +7,7 @@ _DATA_CACHE = {}
 
 
 def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
-    """
-    Normalizes yfinance column headers across different library versions
-    and handles MultiIndex flattening cleanly.
-    """
+
     if df.empty:
         return df
 
@@ -28,10 +25,7 @@ def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFr
 
 
 def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Removes weekend data, completely empty rows, and strips timezone info
-    from the DataFrame index for clean alignment.
-    """
+
     if df.empty:
         return df
 
@@ -45,10 +39,7 @@ def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Finds the common date intersection between two DataFrames to prevent NaN issues
-    during cross-asset operations or comparisons.
-    """
+
     if df1.empty or df2.empty:
         return df1, df2
 
@@ -64,14 +55,22 @@ def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFram
     return df1_aligned, df2_aligned
 
 
-def _fetch_single_ticker(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """Internal helper to handle single-ticker downloads and caching logic."""
+def _fetch_single_ticker(ticker: str, start_date: str, end_date: str, folder: str = "data") -> pd.DataFrame:
+    """Internal helper to handle memory cache, local disk cache, and yfinance fetching."""
     cache_key = f"{ticker}_{start_date}_{end_date}"
+
     if cache_key in _DATA_CACHE:
-        print(f"[Sentinel] [Cache Hit] Returning memory-cached data for {ticker}...")
+        print(f"[Sentinel] [Memory Cache Hit] Returning cached data for {ticker}...")
         return _DATA_CACHE[cache_key].copy()
 
-    print(f"[Sentinel] Attempting to fetch data from API for ticker: {ticker} ({start_date} to {end_date})...")
+    filename = f"{cache_key}.csv"
+    local_df = load_local_data(filename, folder=folder)
+    if not local_df.empty:
+        print(f"[Sentinel] [Disk Cache Hit] Loaded {ticker} from local storage ({filename}).")
+        _DATA_CACHE[cache_key] = local_df.copy()
+        return local_df
+
+    print(f"[Sentinel] Fetching data from API for ticker: {ticker} ({start_date} to {end_date})...")
 
     try:
         df = yf.download(ticker, start=start_date, end=end_date, progress=False)
@@ -85,6 +84,8 @@ def _fetch_single_ticker(ticker: str, start_date: str, end_date: str) -> pd.Data
 
         print(f"[Sentinel] Successfully downloaded {len(df)} rows for {ticker}.")
 
+        save_data_to_csv(df, ticker=ticker, filename=filename, folder=folder)
+
         _DATA_CACHE[cache_key] = df.copy()
         return df
 
@@ -96,15 +97,12 @@ def _fetch_single_ticker(ticker: str, start_date: str, end_date: str) -> pd.Data
 def fetch_market_data(
         tickers: str | list[str],
         start_date: str = None,
-        end_date: str = None
+        end_date: str = None,
+        folder: str = "data"
 ) -> pd.DataFrame | dict[str, pd.DataFrame]:
     """
-    Fetches historical market data for one or multiple tickers from Yahoo Finance API.
-
-    Accepts:
-    - Single string: "AAPL" -> Returns pd.DataFrame
-    - Space/Comma separated string: "AAPL, MSFT" or "AAPL MSFT" -> Returns dict[str, pd.DataFrame]
-    - List of strings: ["AAPL", "MSFT"] -> Returns dict[str, pd.DataFrame]
+    Fetches historical market data for one or multiple tickers.
+    First checks local CSV cache before falling back to Yahoo Finance API.
     """
     if end_date is None:
         end_date = datetime.now().strftime("%Y-%m-%d")
@@ -121,11 +119,11 @@ def fetch_market_data(
         return pd.DataFrame()
 
     if len(ticker_list) == 1:
-        return _fetch_single_ticker(ticker_list[0], start_date, end_date)
+        return _fetch_single_ticker(ticker_list[0], start_date, end_date, folder=folder)
 
     results = {}
     for ticker in ticker_list:
-        df = _fetch_single_ticker(ticker, start_date, end_date)
+        df = _fetch_single_ticker(ticker, start_date, end_date, folder=folder)
         if not df.empty:
             results[ticker] = df
 
@@ -167,11 +165,9 @@ def load_local_data(filename: str, folder: str = "data") -> pd.DataFrame:
 
     try:
         if os.path.exists(filepath):
-            print(f"[Sentinel] Loading local data from: {filepath}")
             df = pd.read_csv(filepath, index_col=0, parse_dates=True)
             return clean_market_data(df)
         else:
-            print(f"[Warning] Local cache file not found at: {filepath}")
             return pd.DataFrame()
 
     except pd.errors.EmptyDataError:

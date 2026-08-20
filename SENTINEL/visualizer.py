@@ -7,17 +7,18 @@ def plot_signals(
         ticker: str,
         window: int,
         metrics: dict,
+        train_window: int = 200,
         save_path: str = None
 ) -> None:
     """
-    Plots historical price, Bollinger Bands, AI Probability Signal, RSI,
+    Plots historical price, Bollinger Bands, ATR, AI Probability, RSI,
     Volume, Buy/Sell signals, and Strategy Equity Curve.
     """
     plt.style.use("dark_background")
 
     fig, ax = plt.subplots(
         5, 1,
-        figsize=(14, 14),
+        figsize=(14, 16),
         sharex=True,
         gridspec_kw={"height_ratios": [3, 1.2, 1, 1, 1.2]}
     )
@@ -40,13 +41,15 @@ def plot_signals(
     sell_signals = df[df["Signal"] == "SELL"] if "Signal" in df.columns else pd.DataFrame()
 
     if not buy_signals.empty:
-        ax[0].scatter(
-            buy_signals.index, buy_signals["Close"], label="BUY", color="lime", marker="^", s=120, zorder=5
-        )
+        ax[0].scatter(buy_signals.index, buy_signals["Close"], label="BUY", color="lime", marker="^", s=120, zorder=5)
     if not sell_signals.empty:
-        ax[0].scatter(
-            sell_signals.index, sell_signals["Close"], label="SELL", color="red", marker="v", s=120, zorder=5
-        )
+        ax[0].scatter(sell_signals.index, sell_signals["Close"], label="SELL", color="red", marker="v", s=120, zorder=5)
+
+    if len(df) > train_window:
+        split_date = df.index[train_window]
+        for a in ax:
+            a.axvline(split_date, color="yellow", linestyle="--", alpha=0.5, linewidth=1.2)
+        ax[0].text(split_date, df["Close"].max(), "  Live Walk-Forward Start", color="yellow", fontsize=9, verticalalignment="top")
 
     ax[0].set_title(f"Sentinel: {ticker} Market Analysis (AI-Enhanced Signals & Performance)", fontsize=14, pad=15)
     ax[0].set_ylabel("Price (USD)", fontsize=11)
@@ -54,19 +57,17 @@ def plot_signals(
     ax[0].legend(loc="upper left", framealpha=0.5)
 
     if "AI_Probability" in df.columns:
-        ai_prob = df["AI_Probability"] * 100  # Yüzdeye çeviriyoruz (%0 - %100)
+        ai_prob = df["AI_Probability"] * 100
         ax[1].plot(df.index, ai_prob, color="cyan", linewidth=1.5, label="AI Bullish Probability (%)")
-
         ax[1].axhline(50, linestyle="--", color="gray", alpha=0.7, label="Neutral (50%)")
         ax[1].axhline(55, linestyle=":", color="lime", alpha=0.8, label="Buy Threshold (55%)")
-
         ax[1].fill_between(df.index, ai_prob, 50, where=(ai_prob >= 50), color="lime", alpha=0.15)
         ax[1].fill_between(df.index, ai_prob, 50, where=(ai_prob < 50), color="red", alpha=0.15)
-
         ax[1].set_ylim(0, 100)
         ax[1].set_ylabel("AI Prob (%)", fontsize=11)
         ax[1].grid(True, linestyle=":", alpha=0.3)
         ax[1].legend(loc="upper left", framealpha=0.5)
+
 
     if "RSI" in df.columns:
         ax[2].plot(df.index, df["RSI"], color="magenta", linewidth=1.2, label="RSI")
@@ -78,30 +79,29 @@ def plot_signals(
         ax[2].grid(True, linestyle=":", alpha=0.3)
         ax[2].legend(loc="upper left", framealpha=0.5)
 
-    ax[3].bar(df.index, df["Volume"], color="skyblue", alpha=0.4, width=0.8, label="Volume")
-
+    ax[3].bar(df.index, df["Volume"], color="skyblue", alpha=0.3, width=0.8, label="Volume")
     vol_sma_col = f"Vol_SMA_{window}"
     if vol_sma_col in df.columns:
         ax[3].plot(df.index, df[vol_sma_col], color="orange", linestyle="-.", linewidth=1.2, label=f"Vol SMA {window}")
-
     ax[3].set_ylabel("Volume", fontsize=11)
     ax[3].grid(True, linestyle=":", alpha=0.3)
     ax[3].legend(loc="upper left", framealpha=0.5)
+
+    if "ATR" in df.columns:
+        ax_atr = ax[3].twinx()
+        ax_atr.plot(df.index, df["ATR"], color="orange", linewidth=1.2, linestyle=":", label="ATR (Volatility)")
+        ax_atr.set_ylabel("ATR ($)", fontsize=10, color="orange")
+        ax_atr.tick_params(axis='y', labelcolor="orange")
+        ax_atr.legend(loc="upper right", framealpha=0.5)
 
     if "equity_curve" in metrics and isinstance(metrics["equity_curve"], pd.Series):
         equity = metrics["equity_curve"]
         ax[4].plot(equity.index, equity.values, color="gold", linewidth=1.8, label="Portfolio Equity ($)")
         ax[4].axhline(100, linestyle="--", color="gray", alpha=0.5, label="Initial Capital ($100)")
 
-        if not buy_signals.empty:
-            buy_equity = equity.reindex(buy_signals.index).dropna()
-            ax[4].scatter(buy_equity.index, buy_equity.values, color="lime", marker="^", s=60, zorder=5,
-                          label="Buy Execution")
-
-        if not sell_signals.empty:
-            sell_equity = equity.reindex(sell_signals.index).dropna()
-            ax[4].scatter(sell_equity.index, sell_equity.values, color="red", marker="v", s=60, zorder=5,
-                          label="Sell Execution")
+        peak_idx = equity.idxmax()
+        peak_val = equity.max()
+        ax[4].scatter(peak_idx, peak_val, color="cyan", s=100, zorder=6, label=f"Peak (${peak_val:.1f})")
 
         ax[4].fill_between(equity.index, equity.values, 100, where=(equity.values >= 100), color="lime", alpha=0.15)
         ax[4].fill_between(equity.index, equity.values, 100, where=(equity.values < 100), color="red", alpha=0.15)
