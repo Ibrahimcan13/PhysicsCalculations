@@ -10,10 +10,7 @@ def plot_signals(
         train_window: int = 200,
         save_path: str = None
 ) -> None:
-    """
-    Plots historical price, Bollinger Bands, ATR, AI Probability, RSI,
-    Volume, Buy/Sell signals, and Strategy Equity Curve.
-    """
+
     plt.style.use("dark_background")
 
     fig, ax = plt.subplots(
@@ -105,6 +102,28 @@ def plot_signals(
 
         ax[4].fill_between(equity.index, equity.values, 100, where=(equity.values >= 100), color="lime", alpha=0.15)
         ax[4].fill_between(equity.index, equity.values, 100, where=(equity.values < 100), color="red", alpha=0.15)
+
+        sharpe = metrics.get("sharpe_ratio", 0.0)
+        max_dd = metrics.get("max_drawdown", 0.0)
+        win_rate = metrics.get("win_rate", 0.0)
+        total_pnl = metrics.get("total_pnl", 0.0)
+
+        stats_text = (
+            f"Net PnL: ${total_pnl:.2f}\n"
+            f"Win Rate: %{win_rate:.1f}\n"
+            f"Max DD: %{max_dd:.2f}\n"
+            f"Sharpe: {sharpe:.2f}"
+        )
+
+        ax[4].text(
+            0.98, 0.90, stats_text,
+            transform=ax[4].transAxes,
+            fontsize=9,
+            verticalalignment="top",
+            horizontalalignment="right",
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="black", alpha=0.7, edgecolor="gold")
+        )
+
 
         ax[4].set_ylabel("Equity ($)", fontsize=11)
         ax[4].grid(True, linestyle=":", alpha=0.3)

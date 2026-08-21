@@ -2,6 +2,7 @@ import pandas as pd
 
 
 def calculate_moving_average(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
+    df = df.copy()
     df[f"SMA_{window}"] = df["Close"].rolling(window=window).mean()
     df[f"Vol_SMA_{window}"] = df["Volume"].rolling(window=window).mean()
     print(f"[Sentinel] Calculated {window}-day Moving Average and Volume SMA.")
@@ -13,6 +14,7 @@ def add_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
         print("[Warning] DataFrame is empty or missing 'Close' column. Skipping RSI calculation.")
         return df
 
+    df = df.copy()
     delta = df["Close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -34,6 +36,7 @@ def calculate_average_true_range(df: pd.DataFrame, window: int = 14) -> pd.DataF
         print(f"[Warning] DataFrame missing required columns {required_cols}. Skipping ATR calculation.")
         return df
 
+    df = df.copy()
     high_low = df["High"] - df["Low"]
     high_prev_close = (df["High"] - df["Close"].shift(1)).abs()
     low_prev_close = (df["Low"] - df["Close"].shift(1)).abs()
@@ -59,6 +62,7 @@ def get_dynamic_margin(df: pd.DataFrame, window: int = 20) -> pd.Series:
 
 
 def add_bollinger_bands(df: pd.DataFrame, window: int = 20, num_std: float = 2.0) -> pd.DataFrame:
+    df = df.copy()
     sma = df["Close"].rolling(window=window).mean()
     std_dev = df["Close"].rolling(window=window).std()
 
@@ -69,11 +73,12 @@ def add_bollinger_bands(df: pd.DataFrame, window: int = 20, num_std: float = 2.0
 
 
 def generate_signals(
-        df: pd.DataFrame,
-        window: int = 20,
-        rsi_lower: float = 30.0,
-        rsi_upper: float = 70.0
+    df: pd.DataFrame,
+    window: int = 20,
+    rsi_lower: float = 30.0,
+    rsi_upper: float = 70.0
 ) -> pd.DataFrame:
+    df = df.copy()
     sma_col = f"SMA_{window}"
     vol_sma_col = f"Vol_SMA_{window}"
 
@@ -83,15 +88,15 @@ def generate_signals(
     margins = get_dynamic_margin(df, window)
 
     raw_buy = (
-            (df["Close"] < df[sma_col] * (1 - margins))
-            & (df["Volume"] > df[vol_sma_col])
-            & (df["RSI"] < rsi_lower)
+        (df["Close"] < df[sma_col] * (1 - margins))
+        & (df["Volume"] > df[vol_sma_col])
+        & (df["RSI"] < rsi_lower)
     )
 
     raw_sell = (
-            (df["Close"] > df[sma_col] * (1 + margins))
-            & (df["Volume"] > df[vol_sma_col])
-            & (df["RSI"] > rsi_upper)
+        (df["Close"] > df[sma_col] * (1 + margins))
+        & (df["Volume"] > df[vol_sma_col])
+        & (df["RSI"] > rsi_upper)
     )
 
     if "AI_Probability" in df.columns:
@@ -113,87 +118,3 @@ def generate_signals(
     df["Signal"] = signals
     print(f"[Sentinel] Signals generated (RSI Buy: <{rsi_lower}, RSI Sell: >{rsi_upper}).")
     return df
-
-
-def calculate_performance(df: pd.DataFrame) -> pd.DataFrame:
-    trades = df[df["Signal"] != "HOLD"].copy()
-    print(f"[Sentinel] Performance analysis ready. Found {len(trades)} trade signals.")
-    return trades
-
-
-def calculate_pnl(df: pd.DataFrame, commission_rate: float = 0.001) -> dict:
-
-    if df.empty or "Signal" not in df.columns:
-        return {
-            "total_pnl": 0.0, "win_rate": 0.0, "total_trades": 0,
-            "winning_trades": 0, "max_drawdown": 0.0,
-            "equity_curve": pd.Series([100.0], index=[df.index[0] if not df.empty else 0])
-        }
-
-    capital = 100.0
-    cash = capital
-    shares = 0.0
-
-    total_pnl = 0.0
-    trade_results = []
-    buy_price = None
-
-    equity_list = []
-
-    for idx, row in df.iterrows():
-        signal = row["Signal"]
-        close_price = row["Close"]
-
-        if signal == "BUY" and shares == 0.0:
-            buy_price = close_price * (1 + commission_rate)
-            shares = cash / buy_price
-            cash = 0.0
-
-        elif signal == "SELL" and shares > 0.0:
-            sell_price = close_price * (1 - commission_rate)
-            cash = shares * sell_price
-
-            pnl = (sell_price - buy_price) * shares
-            total_pnl += pnl
-            trade_results.append(pnl)
-
-            shares = 0.0
-            buy_price = None
-
-        current_equity = cash + (shares * close_price if shares > 0.0 else 0.0)
-        equity_list.append(current_equity)
-
-    if shares > 0.0:
-        last_close = df["Close"].iloc[-1]
-        sell_price = last_close * (1 - commission_rate)
-        cash = shares * sell_price
-        pnl = (sell_price - buy_price) * shares
-        total_pnl += pnl
-        trade_results.append(pnl)
-        shares = 0.0
-        equity_list[-1] = cash
-        print(
-            f"[Sentinel] Auto-closed open BUY position at last available close price: ${last_close:.2f} (PnL: ${pnl:.2f})")
-
-    total_completed_trades = len(trade_results)
-    winning_trades = sum(1 for pnl in trade_results if pnl > 0)
-    win_rate = (winning_trades / total_completed_trades * 100) if total_completed_trades > 0 else 0.0
-
-    equity_series = pd.Series(equity_list, index=df.index)
-
-    peak = equity_series.cummax()
-    drawdown = (equity_series - peak) / peak
-    max_drawdown = drawdown.min() * 100
-
-    metrics = {
-        "total_pnl": total_pnl,
-        "win_rate": win_rate,
-        "total_trades": total_completed_trades,
-        "winning_trades": winning_trades,
-        "max_drawdown": abs(max_drawdown),
-        "equity_curve": equity_series
-    }
-
-    print(
-        f"[Sentinel] Advanced Metrics Computed -> Net PnL: ${total_pnl:.2f} | Win Rate: {win_rate:.1f}% | Max DD: {abs(max_drawdown):.2f}%")
-    return metrics
