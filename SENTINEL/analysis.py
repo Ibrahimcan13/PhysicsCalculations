@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 
@@ -49,7 +50,6 @@ def calculate_average_true_range(df: pd.DataFrame, window: int = 14) -> pd.DataF
 
 
 def get_dynamic_margin(df: pd.DataFrame, window: int = 20) -> pd.Series:
-    """Calculates dynamic volatility margin based on standard deviation of closing prices."""
     sma_col = f"SMA_{window}" if f"SMA_{window}" in df.columns else "Close"
     std_dev = df["Close"].rolling(window=window).std()
 
@@ -76,7 +76,8 @@ def generate_signals(
     df: pd.DataFrame,
     window: int = 20,
     rsi_lower: float = 30.0,
-    rsi_upper: float = 70.0
+    rsi_upper: float = 70.0,
+    max_vol_zscore: float = 3.0
 ) -> pd.DataFrame:
     df = df.copy()
     sma_col = f"SMA_{window}"
@@ -87,34 +88,44 @@ def generate_signals(
 
     margins = get_dynamic_margin(df, window)
 
+    vol_std = df["Volume"].rolling(window=window).std().replace(0, 1e-9)
+    vol_zscore = (df["Volume"] - df[vol_sma_col]) / vol_std
+    valid_volume_mask = (df["Volume"] > df[vol_sma_col]) & (vol_zscore <= max_vol_zscore)
+
     raw_buy = (
         (df["Close"] < df[sma_col] * (1 - margins))
-        & (df["Volume"] > df[vol_sma_col])
+        & valid_volume_mask
         & (df["RSI"] < rsi_lower)
     )
 
     raw_sell = (
         (df["Close"] > df[sma_col] * (1 + margins))
-        & (df["Volume"] > df[vol_sma_col])
+        & valid_volume_mask
         & (df["RSI"] > rsi_upper)
     )
 
     if "AI_Probability" in df.columns:
         raw_buy = raw_buy & (df["AI_Probability"] > 0.50)
 
-    signals = []
-    current_position = False
+    buy_arr = raw_buy.to_numpy()
+    sell_arr = raw_sell.to_numpy()
+    n = len(df)
 
-    for i in range(len(df)):
-        if raw_buy.iloc[i] and not current_position:
-            signals.append("BUY")
-            current_position = True
-        elif raw_sell.iloc[i] and current_position:
-            signals.append("SELL")
-            current_position = False
-        else:
-            signals.append("HOLD")
+    pos_change = np.zeros(n, dtype=int)
+    pos_change[buy_arr] = 1
+    pos_change[sell_arr] = -1
 
-    df["Signal"] = signals
-    print(f"[Sentinel] Signals generated (RSI Buy: <{rsi_lower}, RSI Sell: >{rsi_upper}).")
+    current_pos = False
+    final_signals = np.full(n, "HOLD", dtype=object)
+
+    for i in range(n):
+        if pos_change[i] == 1 and not current_pos:
+            final_signals[i] = "BUY"
+            current_pos = True
+        elif pos_change[i] == -1 and current_pos:
+            final_signals[i] = "SELL"
+            current_pos = False
+
+    df["Signal"] = final_signals
+    print(f"[Sentinel] Signals generated via vectorized NumPy pipeline (RSI Buy: <{rsi_lower}, Sell: >{rsi_upper}).")
     return df

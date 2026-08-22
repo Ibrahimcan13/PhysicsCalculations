@@ -9,7 +9,7 @@ from analysis import (
     generate_signals,
 )
 from back_tester import run_backtest
-from data_loader import fetch_market_data, save_data_to_csv
+from data_loader import fetch_market_data, save_data_to_parquet
 from predictor import train_and_predict
 from visualizer import plot_signals
 
@@ -100,15 +100,15 @@ def run_sentinel():
 
     forecast_days = 5
     print("\n[AI Engine] Training Model & Predicting Horizons...")
-    df = train_and_predict(df, forecast_days=forecast_days, train_window=train_window)
+    df = train_and_predict(df, forecast_days=forecast_days, train_window=train_window, retrain_step=20)
 
     print("\n[Backtest Engine] Generating Signals & Simulating Portfolio...")
     df = generate_signals(df, window=window_size)
     df, trade_log, metrics = run_backtest(df, initial_capital=100.0, commission_rate=0.001)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    dynamic_filename = f"{user_ticker}_{timestamp}.csv"
-    save_data_to_csv(df, dynamic_filename)
+    dynamic_filename = f"{user_ticker}_{timestamp}.parquet"
+    save_data_to_parquet(df, ticker=user_ticker, filename=dynamic_filename)
 
     latest_prob = (
         df["AI_Probability"].iloc[-1]
@@ -117,7 +117,7 @@ def run_sentinel():
     )
     latest_price = df["Close"].iloc[-1]
 
-    print("          SENTINEL STATUS REPORT         ")
+    print("\n          SENTINEL STATUS REPORT         ")
     print(f"Target Asset       : {user_ticker}")
     print(f"Latest Close Price : ${latest_price:.2f}")
     print(f"Analysis Window    : SMA {window_size}d | RSI {rsi_window}d | ATR 14d")
@@ -139,12 +139,12 @@ def run_sentinel():
     else:
         print("AI FORECAST            : Insufficient data for prediction window.")
 
-
     plot_signals(
         df,
         ticker=user_ticker,
         window=window_size,
         metrics=metrics,
+        trade_log=trade_log,
         train_window=train_window,
     )
 

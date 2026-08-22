@@ -7,7 +7,6 @@ _DATA_CACHE = {}
 
 
 def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
-
     if df.empty:
         return df
 
@@ -25,7 +24,6 @@ def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFr
 
 
 def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
-
     if df.empty:
         return df
 
@@ -39,7 +37,6 @@ def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-
     if df1.empty or df2.empty:
         return df1, df2
 
@@ -55,18 +52,61 @@ def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFram
     return df1_aligned, df2_aligned
 
 
+def save_data_to_parquet(
+        df: pd.DataFrame, ticker: str, filename: str = None, folder: str = "data") -> str:
+    if df.empty:
+        print("[Warning] DataFrame is empty. Aborting Parquet save operation.")
+        return ""
+
+    try:
+        os.makedirs(folder, exist_ok=True)
+
+        if not filename:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+            filename = f"{ticker}_{timestamp}.parquet"
+        elif not filename.endswith(".parquet"):
+            filename = f"{os.path.splitext(filename)[0]}.parquet"
+
+        filepath = os.path.join(folder, filename)
+
+        df.to_parquet(filepath, compression="snappy")
+        print(f"[Sentinel] Data successfully cached locally at: {filepath}")
+        return filepath
+
+    except Exception as e:
+        print(f"[Error] Failed to save Parquet file ({type(e).__name__}): {e}")
+        return ""
+
+
+def load_local_data(filename: str, folder: str = "data") -> pd.DataFrame:
+    if not filename.endswith(".parquet"):
+        filename = f"{os.path.splitext(filename)[0]}.parquet"
+
+    filepath = os.path.join(folder, filename)
+
+    try:
+        if os.path.exists(filepath):
+            df = pd.read_parquet(filepath)
+            return clean_market_data(df)
+        else:
+            return pd.DataFrame()
+
+    except Exception as e:
+        print(f"[Error] Unexpected error while reading Parquet file: {e}")
+        return pd.DataFrame()
+
+
 def _fetch_single_ticker(ticker: str, start_date: str, end_date: str, folder: str = "data") -> pd.DataFrame:
-    """Internal helper to handle memory cache, local disk cache, and yfinance fetching."""
     cache_key = f"{ticker}_{start_date}_{end_date}"
 
     if cache_key in _DATA_CACHE:
         print(f"[Sentinel] [Memory Cache Hit] Returning cached data for {ticker}...")
         return _DATA_CACHE[cache_key].copy()
 
-    filename = f"{cache_key}.csv"
+    filename = f"{cache_key}.parquet"
     local_df = load_local_data(filename, folder=folder)
     if not local_df.empty:
-        print(f"[Sentinel] [Disk Cache Hit] Loaded {ticker} from local storage ({filename}).")
+        print(f"[Sentinel] [Disk Cache Hit] Loaded {ticker} from local Parquet storage ({filename}).")
         _DATA_CACHE[cache_key] = local_df.copy()
         return local_df
 
@@ -84,7 +124,7 @@ def _fetch_single_ticker(ticker: str, start_date: str, end_date: str, folder: st
 
         print(f"[Sentinel] Successfully downloaded {len(df)} rows for {ticker}.")
 
-        save_data_to_csv(df, ticker=ticker, filename=filename, folder=folder)
+        save_data_to_parquet(df, ticker=ticker, filename=filename, folder=folder)
 
         _DATA_CACHE[cache_key] = df.copy()
         return df
@@ -100,10 +140,6 @@ def fetch_market_data(
         end_date: str = None,
         folder: str = "data"
 ) -> pd.DataFrame | dict[str, pd.DataFrame]:
-    """
-    Fetches historical market data for one or multiple tickers.
-    First checks local CSV cache before falling back to Yahoo Finance API.
-    """
     if end_date is None:
         end_date = datetime.now().strftime("%Y-%m-%d")
     if start_date is None:
@@ -128,51 +164,3 @@ def fetch_market_data(
             results[ticker] = df
 
     return results
-
-
-def save_data_to_csv(
-        df: pd.DataFrame, ticker: str, filename: str = None, folder: str = "data"
-) -> str:
-    """Saves the fetched DataFrame to a local CSV file with clean naming and rounded values."""
-    if df.empty:
-        print("[Warning] DataFrame is empty. Aborting local save operation.")
-        return ""
-
-    try:
-        os.makedirs(folder, exist_ok=True)
-
-        if not filename:
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-            filename = f"{ticker}_{timestamp}.csv"
-
-        filepath = os.path.join(folder, filename)
-
-        df.round(2).to_csv(filepath)
-        print(f"[Sentinel] Data successfully cached locally at: {filepath}")
-        return filepath
-
-    except IOError as e:
-        print(f"[Error] Disk I/O failed. Could not write file to disk: {e}")
-        return ""
-    except Exception as e:
-        print(f"[Error] Unexpected error during save operation: {e}")
-        return ""
-
-
-def load_local_data(filename: str, folder: str = "data") -> pd.DataFrame:
-    """Loads historical data from a locally cached CSV file with existence checks."""
-    filepath = os.path.join(folder, filename)
-
-    try:
-        if os.path.exists(filepath):
-            df = pd.read_csv(filepath, index_col=0, parse_dates=True)
-            return clean_market_data(df)
-        else:
-            return pd.DataFrame()
-
-    except pd.errors.EmptyDataError:
-        print(f"[Error] The local cache file at {filepath} is empty or corrupted.")
-        return pd.DataFrame()
-    except Exception as e:
-        print(f"[Error] Unexpected error while reading local file: {e}")
-        return pd.DataFrame()

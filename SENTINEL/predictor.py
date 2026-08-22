@@ -36,7 +36,13 @@ def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.
     return cleaned_data
 
 
-def train_and_predict(df: pd.DataFrame, forecast_days: int = 5, train_window: int = 200) -> pd.DataFrame:
+def train_and_predict(
+    df: pd.DataFrame,
+    forecast_days: int = 5,
+    train_window: int = 200,
+    retrain_step: int = 20
+) -> pd.DataFrame:
+
     processed_df = create_features_and_targets(df, forecast_days=forecast_days)
 
     if processed_df.empty:
@@ -53,23 +59,33 @@ def train_and_predict(df: pd.DataFrame, forecast_days: int = 5, train_window: in
         return df
 
     probabilities = [np.nan] * len(processed_df)
+    current_model = None
 
     for i in range(train_window, len(trainable_df)):
-        train_chunk = trainable_df.iloc[i - train_window: i]
+        if (i - train_window) % retrain_step == 0 or current_model is None:
+            train_chunk = trainable_df.iloc[i - train_window: i]
+            X_train = train_chunk[feature_cols]
+            y_train = train_chunk["Target_Direction"].astype(int)
 
-        X_train = train_chunk[feature_cols]
-        y_train = train_chunk["Target_Direction"].astype(int)
-
-        model = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42)
-        model.fit(X_train, y_train)
+            current_model = RandomForestClassifier(
+                n_estimators=50,
+                max_depth=5,
+                class_weight="balanced",
+                random_state=42
+            )
+            current_model.fit(X_train, y_train)
 
         X_test = trainable_df.iloc[[i]][feature_cols]
-        probabilities[i] = model.predict_proba(X_test)[0, 1]
+        probabilities[i] = current_model.predict_proba(X_test)[0, 1]
 
     processed_df["AI_Probability"] = probabilities
     processed_df["AI_Probability"] = processed_df["AI_Probability"].fillna(0.50)
 
     processed_df["AI_Signal"] = (processed_df["AI_Probability"] > 0.55).astype(int)
 
-    print(f"[Sentinel] Rolling Walk-Forward completed (Window size: {train_window}). Features: {feature_cols}")
+    print(
+        f"[Sentinel] Step-based Walk-Forward completed "
+        f"(Window: {train_window}, Retrain Step: {retrain_step}d, Class Weight: Balanced). "
+        f"Features: {feature_cols}"
+    )
     return processed_df

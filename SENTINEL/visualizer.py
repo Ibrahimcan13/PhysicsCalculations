@@ -7,6 +7,7 @@ def plot_signals(
         ticker: str,
         window: int,
         metrics: dict,
+        trade_log: list = None,
         train_window: int = 200,
         save_path: str = None
 ) -> None:
@@ -39,8 +40,46 @@ def plot_signals(
 
     if not buy_signals.empty:
         ax[0].scatter(buy_signals.index, buy_signals["Close"], label="BUY", color="lime", marker="^", s=120, zorder=5)
+        for idx, row in buy_signals.iterrows():
+            rsi_val = f"{row['RSI']:.1f}" if "RSI" in row else "N/A"
+            ai_val = f"{row['AI_Probability']*100:.1f}%" if "AI_Probability" in row else "N/A"
+            ax[0].annotate(
+                f"BUY\nRSI:{rsi_val}\nAI:{ai_val}",
+                (idx, row["Close"]),
+                xytext=(0, -35), textcoords="offset points",
+                ha='center', fontsize=7, color='lime',
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.6, edgecolor="lime"),
+                arrowprops=dict(arrowstyle="->", color="lime", lw=0.8)
+            )
+
     if not sell_signals.empty:
         ax[0].scatter(sell_signals.index, sell_signals["Close"], label="SELL", color="red", marker="v", s=120, zorder=5)
+        for idx, row in sell_signals.iterrows():
+            ax[0].annotate(
+                "SELL",
+                (idx, row["Close"]),
+                xytext=(0, 25), textcoords="offset points",
+                ha='center', fontsize=7, color='red',
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.6, edgecolor="red"),
+                arrowprops=dict(arrowstyle="->", color="red", lw=0.8)
+            )
+
+    if trade_log:
+        for trade in trade_log:
+            exit_reason = trade.get("exit_reason", "")
+            exit_date = trade.get("exit_date")
+            exit_price = trade.get("exit_price")
+
+            if exit_date and exit_price and "STOP_LOSS" in exit_reason.upper():
+                ax[0].scatter(exit_date, exit_price, color="orange", marker="X", s=140, zorder=6, label="Stop-Loss Hit")
+                ax[0].annotate(
+                    f"STOP-LOSS\n${exit_price:.2f}",
+                    (exit_date, exit_price),
+                    xytext=(15, 15), textcoords="offset points",
+                    fontsize=8, color="orange", fontweight="bold",
+                    bbox=dict(boxstyle="square,pad=0.3", facecolor="black", alpha=0.8, edgecolor="orange"),
+                    arrowprops=dict(arrowstyle="->", color="orange", lw=1.2)
+                )
 
     if len(df) > train_window:
         split_date = df.index[train_window]
@@ -48,7 +87,7 @@ def plot_signals(
             a.axvline(split_date, color="yellow", linestyle="--", alpha=0.5, linewidth=1.2)
         ax[0].text(split_date, df["Close"].max(), "  Live Walk-Forward Start", color="yellow", fontsize=9, verticalalignment="top")
 
-    ax[0].set_title(f"Sentinel: {ticker} Market Analysis (AI-Enhanced Signals & Performance)", fontsize=14, pad=15)
+    ax[0].set_title(f"Sentinel: {ticker} Market Analysis (AI-Enhanced Signals & Annotations)", fontsize=14, pad=15)
     ax[0].set_ylabel("Price (USD)", fontsize=11)
     ax[0].grid(True, linestyle=":", alpha=0.3)
     ax[0].legend(loc="upper left", framealpha=0.5)
@@ -64,7 +103,6 @@ def plot_signals(
         ax[1].set_ylabel("AI Prob (%)", fontsize=11)
         ax[1].grid(True, linestyle=":", alpha=0.3)
         ax[1].legend(loc="upper left", framealpha=0.5)
-
 
     if "RSI" in df.columns:
         ax[2].plot(df.index, df["RSI"], color="magenta", linewidth=1.2, label="RSI")
@@ -123,7 +161,6 @@ def plot_signals(
             horizontalalignment="right",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="black", alpha=0.7, edgecolor="gold")
         )
-
 
         ax[4].set_ylabel("Equity ($)", fontsize=11)
         ax[4].grid(True, linestyle=":", alpha=0.3)
