@@ -2,6 +2,33 @@ import numpy as np
 import pandas as pd
 
 
+def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5, measurement_variance: float = 1e-3) -> pd.DataFrame:
+    if df.empty or "Close" not in df.columns:
+        return df
+
+    df = df.copy()
+    prices = df["Close"].to_numpy()
+    n = len(prices)
+
+    kalman_estimates = np.zeros(n)
+    post_estimate = prices[0] if n > 0 else 0.0
+    post_error = 1.0
+
+    for i in range(n):
+        prior_estimate = post_estimate
+        prior_error = post_error + process_variance
+
+        kalman_gain = prior_error / (prior_error + measurement_variance + 1e-9)
+        post_estimate = prior_estimate + kalman_gain * (prices[i] - prior_estimate)
+        post_error = (1 - kalman_gain) * prior_error
+
+        kalman_estimates[i] = post_estimate
+
+    df["Kalman"] = kalman_estimates
+    print("[Sentinel] Kalman Filter applied to Close prices (Noise Reduction Active).")
+    return df
+
+
 def calculate_moving_average(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     df = df.copy()
     df[f"SMA_{window}"] = df["Close"].rolling(window=window).mean()
@@ -23,7 +50,7 @@ def add_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
     avg_gain = gain.ewm(alpha=1 / window, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1 / window, adjust=False).mean()
 
-    rs = avg_gain / avg_loss.replace(0, 1e-9)
+    rs = avg_gain / (avg_loss + 1e-9)
     df["RSI"] = 100 - (100 / (1 + rs))
     df["RSI"] = df["RSI"].fillna(50)
 
@@ -53,11 +80,7 @@ def get_dynamic_margin(df: pd.DataFrame, window: int = 20) -> pd.Series:
     sma_col = f"SMA_{window}" if f"SMA_{window}" in df.columns else "Close"
     std_dev = df["Close"].rolling(window=window).std()
 
-    if sma_col in df.columns:
-        margin = std_dev / df[sma_col]
-    else:
-        margin = std_dev / df["Close"]
-
+    margin = std_dev / (df[sma_col] + 1e-9) if sma_col in df.columns else std_dev / (df["Close"] + 1e-9)
     return margin.clip(0.01, 0.05)
 
 
@@ -86,10 +109,13 @@ def generate_signals(
     if sma_col not in df.columns or vol_sma_col not in df.columns:
         df = calculate_moving_average(df, window=window)
 
+    if "Kalman" not in df.columns:
+        df = add_kalman_filter(df)
+
     margins = get_dynamic_margin(df, window)
 
-    vol_std = df["Volume"].rolling(window=window).std().replace(0, 1e-9)
-    vol_zscore = (df["Volume"] - df[vol_sma_col]) / vol_std
+    vol_std = df["Volume"].rolling(window=window).std().fillna(1.0)
+    vol_zscore = (df["Volume"] - df[vol_sma_col]) / (vol_std + 1e-9)
     valid_volume_mask = (df["Volume"] > df[vol_sma_col]) & (vol_zscore <= max_vol_zscore)
 
     raw_buy = (
@@ -111,21 +137,20 @@ def generate_signals(
     sell_arr = raw_sell.to_numpy()
     n = len(df)
 
-    pos_change = np.zeros(n, dtype=int)
+    pos_change = np.zeros(n, dtype=np.int8)
     pos_change[buy_arr] = 1
     pos_change[sell_arr] = -1
 
     current_pos = False
-    final_signals = np.full(n, "HOLD", dtype=object)
+    final_signals = np.zeros(n, dtype=np.int8)
 
     for i in range(n):
         if pos_change[i] == 1 and not current_pos:
-            final_signals[i] = "BUY"
+            final_signals[i] = 1
             current_pos = True
         elif pos_change[i] == -1 and current_pos:
-            final_signals[i] = "SELL"
+            final_signals[i] = -1
             current_pos = False
 
     df["Signal"] = final_signals
-    print(f"[Sentinel] Signals generated via vectorized NumPy pipeline (RSI Buy: <{rsi_lower}, Sell: >{rsi_upper}).")
     return df

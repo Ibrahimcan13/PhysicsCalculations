@@ -3,6 +3,7 @@ import pandas as pd
 
 from analysis import (
     add_bollinger_bands,
+    add_kalman_filter,
     add_rsi,
     calculate_average_true_range,
     calculate_moving_average,
@@ -42,8 +43,26 @@ def get_valid_window_size(prompt: str, default: int) -> int:
         return default
 
 
+def get_valid_float(prompt: str, default: float) -> float:
+    val_str = input(f"{prompt} [Press Enter for Default: ${default:.2f}]: ").strip()
+    if not val_str:
+        print(f"[Sentinel] Using default initial capital: ${default:.2f}")
+        return default
+    try:
+        val = float(val_str)
+        if val > 0:
+            print(f"[Sentinel] Initial capital set to: ${val:.2f}")
+            return val
+        else:
+            print(f"[Warning] Must be greater than 0. Using default: ${default:.2f}")
+            return default
+    except ValueError:
+        print(f"[Warning] Invalid number. Using default: ${default:.2f}")
+        return default
+
+
 def run_sentinel():
-    print("           PROJECT SENTINEL v2.0          ")
+    print("           PROJECT SENTINEL          ")
 
     user_ticker = input("Enter asset ticker (e.g., RACE, AAPL): ").strip().upper()
     if not user_ticker:
@@ -51,6 +70,7 @@ def run_sentinel():
         return
 
     print("\n[Configuration]")
+    initial_capital = get_valid_float("Enter starting capital in USD", default=100.0)
     window_size = get_valid_window_size("Enter analysis SMA window size in days", default=20)
     rsi_window = get_valid_window_size("Enter RSI window size in days", default=14)
     train_window = 200
@@ -83,28 +103,31 @@ def run_sentinel():
     start_date = start_dt.strftime("%Y-%m-%d")
     end_date = end_dt.strftime("%Y-%m-%d")
 
-    print(
-        f"\n[Sentinel] Fetching {user_ticker} data from {start_date} to {end_date}..."
-    )
-
+    print(f"\n[Sentinel] Fetching {user_ticker} data from {start_date} to {end_date}...")
     df = fetch_market_data(user_ticker, start_date, end_date)
     if df.empty:
         print("[Error] Failed to fetch market data. Terminating.")
         return
 
-    print("\n[Technical Engine] Calculating Indicators...")
+    print("\n[Technical Engine] Calculating Indicators & Applying Kalman Filter...")
+    df = add_kalman_filter(df)
     df = calculate_moving_average(df, window=window_size)
     df = add_rsi(df, window=rsi_window)
     df = calculate_average_true_range(df, window=14)
     df = add_bollinger_bands(df, window=window_size, num_std=2.0)
 
     forecast_days = 5
-    print("\n[AI Engine] Training Model & Predicting Horizons...")
+    print("\n[AI Engine] Training Parallel Model (n_jobs=-1) & Predicting...")
     df = train_and_predict(df, forecast_days=forecast_days, train_window=train_window, retrain_step=20)
 
-    print("\n[Backtest Engine] Generating Signals & Simulating Portfolio...")
+    print("\n[Backtest Engine] Generating Integer Signals & Simulating Portfolio...")
     df = generate_signals(df, window=window_size)
-    df, trade_log, metrics = run_backtest(df, initial_capital=100.0, commission_rate=0.001)
+    df, trade_log, metrics = run_backtest(
+        df,
+        initial_capital=initial_capital,
+        position_pct=0.10,
+        commission_rate=0.001
+    )
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     dynamic_filename = f"{user_ticker}_{timestamp}.parquet"
@@ -119,8 +142,9 @@ def run_sentinel():
 
     print("\n          SENTINEL STATUS REPORT         ")
     print(f"Target Asset       : {user_ticker}")
+    print(f"Starting Capital   : ${initial_capital:.2f}")
     print(f"Latest Close Price : ${latest_price:.2f}")
-    print(f"Analysis Window    : SMA {window_size}d | RSI {rsi_window}d | ATR 14d")
+    print(f"Analysis Pipeline  : Kalman | SMA {window_size}d | RSI {rsi_window}d | ATR 14d")
     print(f"Total Trades       : {metrics.get('total_trades', 0)}")
     print(f"Winning Trades     : {metrics.get('winning_trades', 0)}")
     print(f"Win Rate           : %{metrics.get('win_rate', 0.0):.1f}")

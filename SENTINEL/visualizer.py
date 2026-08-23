@@ -21,7 +21,11 @@ def plot_signals(
         gridspec_kw={"height_ratios": [3, 1.2, 1, 1, 1.2]}
     )
 
-    ax[0].plot(df.index, df["Close"], label="Price", color="lightgray", alpha=0.8, linewidth=1.5)
+    if "Close" in df.columns:
+        ax[0].plot(df.index, df["Close"], label="Price", color="lightgray", alpha=0.8, linewidth=1.5)
+
+    if "Kalman" in df.columns:
+        ax[0].plot(df.index, df["Kalman"], label="Kalman Filter (Trend)", color="cyan", linestyle="-", linewidth=1.2, alpha=0.9)
 
     sma_col = f"SMA_{window}"
     bb_upper_col = f"BB_Upper_{window}"
@@ -35,10 +39,10 @@ def plot_signals(
         ax[0].plot(df.index, df[bb_lower_col], label="BB Lower", color="purple", linestyle=":", alpha=0.7)
         ax[0].fill_between(df.index, df[bb_upper_col], df[bb_lower_col], color="cyan", alpha=0.03, label="BB Range")
 
-    buy_signals = df[df["Signal"] == "BUY"] if "Signal" in df.columns else pd.DataFrame()
-    sell_signals = df[df["Signal"] == "SELL"] if "Signal" in df.columns else pd.DataFrame()
+    buy_signals = df[df["Signal"] == 1] if "Signal" in df.columns else pd.DataFrame()
+    sell_signals = df[df["Signal"] == -1] if "Signal" in df.columns else pd.DataFrame()
 
-    if not buy_signals.empty:
+    if not buy_signals.empty and "Close" in buy_signals.columns:
         ax[0].scatter(buy_signals.index, buy_signals["Close"], label="BUY", color="lime", marker="^", s=120, zorder=5)
         for idx, row in buy_signals.iterrows():
             rsi_val = f"{row['RSI']:.1f}" if "RSI" in row else "N/A"
@@ -52,7 +56,7 @@ def plot_signals(
                 arrowprops=dict(arrowstyle="->", color="lime", lw=0.8)
             )
 
-    if not sell_signals.empty:
+    if not sell_signals.empty and "Close" in sell_signals.columns:
         ax[0].scatter(sell_signals.index, sell_signals["Close"], label="SELL", color="red", marker="v", s=120, zorder=5)
         for idx, row in sell_signals.iterrows():
             ax[0].annotate(
@@ -66,28 +70,20 @@ def plot_signals(
 
     if trade_log:
         for trade in trade_log:
-            exit_reason = trade.get("exit_reason", "")
-            exit_date = trade.get("exit_date")
-            exit_price = trade.get("exit_price")
+            exit_reason = trade.get("Reason", trade.get("exit_reason", ""))
+            exit_date = trade.get("Exit_Date", trade.get("exit_date"))
+            exit_price = trade.get("Exit_Price", trade.get("exit_price"))
 
-            if exit_date and exit_price and "STOP_LOSS" in exit_reason.upper():
+            if exit_date and exit_price and "STOP" in str(exit_reason).upper():
                 ax[0].scatter(exit_date, exit_price, color="orange", marker="X", s=140, zorder=6, label="Stop-Loss Hit")
-                ax[0].annotate(
-                    f"STOP-LOSS\n${exit_price:.2f}",
-                    (exit_date, exit_price),
-                    xytext=(15, 15), textcoords="offset points",
-                    fontsize=8, color="orange", fontweight="bold",
-                    bbox=dict(boxstyle="square,pad=0.3", facecolor="black", alpha=0.8, edgecolor="orange"),
-                    arrowprops=dict(arrowstyle="->", color="orange", lw=1.2)
-                )
 
-    if len(df) > train_window:
+    if len(df) > train_window and "Close" in df.columns:
         split_date = df.index[train_window]
         for a in ax:
             a.axvline(split_date, color="yellow", linestyle="--", alpha=0.5, linewidth=1.2)
         ax[0].text(split_date, df["Close"].max(), "  Live Walk-Forward Start", color="yellow", fontsize=9, verticalalignment="top")
 
-    ax[0].set_title(f"Sentinel: {ticker} Market Analysis (AI-Enhanced Signals & Annotations)", fontsize=14, pad=15)
+    ax[0].set_title(f"Sentinel: {ticker} Market Analysis (AI-Enhanced Signals & Kalman Filter)", fontsize=14, pad=15)
     ax[0].set_ylabel("Price (USD)", fontsize=11)
     ax[0].grid(True, linestyle=":", alpha=0.3)
     ax[0].legend(loc="upper left", framealpha=0.5)
@@ -114,13 +110,14 @@ def plot_signals(
         ax[2].grid(True, linestyle=":", alpha=0.3)
         ax[2].legend(loc="upper left", framealpha=0.5)
 
-    ax[3].bar(df.index, df["Volume"], color="skyblue", alpha=0.3, width=0.8, label="Volume")
-    vol_sma_col = f"Vol_SMA_{window}"
-    if vol_sma_col in df.columns:
-        ax[3].plot(df.index, df[vol_sma_col], color="orange", linestyle="-.", linewidth=1.2, label=f"Vol SMA {window}")
-    ax[3].set_ylabel("Volume", fontsize=11)
-    ax[3].grid(True, linestyle=":", alpha=0.3)
-    ax[3].legend(loc="upper left", framealpha=0.5)
+    if "Volume" in df.columns:
+        ax[3].bar(df.index, df["Volume"], color="skyblue", alpha=0.3, width=0.8, label="Volume")
+        vol_sma_col = f"Vol_SMA_{window}"
+        if vol_sma_col in df.columns:
+            ax[3].plot(df.index, df[vol_sma_col], color="orange", linestyle="-.", linewidth=1.2, label=f"Vol SMA {window}")
+        ax[3].set_ylabel("Volume", fontsize=11)
+        ax[3].grid(True, linestyle=":", alpha=0.3)
+        ax[3].legend(loc="upper left", framealpha=0.5)
 
     if "ATR" in df.columns:
         ax_atr = ax[3].twinx()

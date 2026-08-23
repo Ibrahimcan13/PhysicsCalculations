@@ -16,10 +16,9 @@ def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFr
         elif ticker and ticker in df.columns.levels[0]:
             df = df.xs(ticker, axis=1, level=0)
         else:
-            df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
-    else:
-        df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+            df.columns = df.columns.get_level_values(0)
 
+    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
     return df
 
 
@@ -62,8 +61,7 @@ def save_data_to_parquet(
         os.makedirs(folder, exist_ok=True)
 
         if not filename:
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-            filename = f"{ticker}_{timestamp}.parquet"
+            filename = f"{ticker}_cache.parquet"
         elif not filename.endswith(".parquet"):
             filename = f"{os.path.splitext(filename)[0]}.parquet"
 
