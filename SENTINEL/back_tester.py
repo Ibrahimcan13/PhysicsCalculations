@@ -52,7 +52,7 @@ def calculate_backtest_metrics(
 def run_backtest(
         df: pd.DataFrame,
         initial_capital: float = 100.0,
-        position_pct: float = 0.10,  # Sermayenin %10'u ile pozisyon açma
+        position_pct: float = 0.10,  
         commission_rate: float = 0.001,
         slippage_rate: float = 0.0005,
         use_atr_stop: bool = True,
