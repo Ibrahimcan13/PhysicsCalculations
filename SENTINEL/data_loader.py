@@ -1,9 +1,11 @@
+from collections import OrderedDict
 from datetime import datetime, timedelta
 import os
 import pandas as pd
 import yfinance as yf
 
-_DATA_CACHE = {}
+MAX_CACHE_SIZE = 32
+_DATA_CACHE: OrderedDict[str, pd.DataFrame] = OrderedDict()
 
 
 def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
@@ -28,6 +30,8 @@ def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
 
     if hasattr(df.index, 'tz') and df.index.tz is not None:
         df.index = df.index.tz_localize(None)
+
+    df = df.sort_index()
 
     df = df[df.index.dayofweek < 5]
     df = df.dropna(how="all")
@@ -94,18 +98,28 @@ def load_local_data(filename: str, folder: str = "data") -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _manage_memory_cache(key: str, df: pd.DataFrame):
+    if key in _DATA_CACHE:
+        _DATA_CACHE.move_to_end(key)
+    _DATA_CACHE[key] = df.copy()
+
+    if len(_DATA_CACHE) > MAX_CACHE_SIZE:
+        _DATA_CACHE.popitem(last=False)
+
+
 def _fetch_single_ticker(ticker: str, start_date: str, end_date: str, folder: str = "data") -> pd.DataFrame:
     cache_key = f"{ticker}_{start_date}_{end_date}"
 
     if cache_key in _DATA_CACHE:
         print(f"[Sentinel] [Memory Cache Hit] Returning cached data for {ticker}...")
+        _DATA_CACHE.move_to_end(cache_key)
         return _DATA_CACHE[cache_key].copy()
 
     filename = f"{cache_key}.parquet"
     local_df = load_local_data(filename, folder=folder)
     if not local_df.empty:
         print(f"[Sentinel] [Disk Cache Hit] Loaded {ticker} from local Parquet storage ({filename}).")
-        _DATA_CACHE[cache_key] = local_df.copy()
+        _manage_memory_cache(cache_key, local_df)
         return local_df
 
     print(f"[Sentinel] Fetching data from API for ticker: {ticker} ({start_date} to {end_date})...")
@@ -123,8 +137,8 @@ def _fetch_single_ticker(ticker: str, start_date: str, end_date: str, folder: st
         print(f"[Sentinel] Successfully downloaded {len(df)} rows for {ticker}.")
 
         save_data_to_parquet(df, ticker=ticker, filename=filename, folder=folder)
+        _manage_memory_cache(cache_key, df)
 
-        _DATA_CACHE[cache_key] = df.copy()
         return df
 
     except Exception as e:

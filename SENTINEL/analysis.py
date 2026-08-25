@@ -2,16 +2,13 @@ import numpy as np
 import pandas as pd
 
 
-def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5, measurement_variance: float = 1e-3) -> pd.DataFrame:
-    if df.empty or "Close" not in df.columns:
-        return df
-
-    df = df.copy()
-    prices = df["Close"].to_numpy()
+def _kalman_loop(prices: np.ndarray, process_variance: float, measurement_variance: float) -> np.ndarray:
     n = len(prices)
+    kalman_estimates = np.zeros(n, dtype=np.float64)
+    if n == 0:
+        return kalman_estimates
 
-    kalman_estimates = np.zeros(n)
-    post_estimate = prices[0] if n > 0 else 0.0
+    post_estimate = prices[0]
     post_error = 1.0
 
     for i in range(n):
@@ -20,12 +17,22 @@ def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5, measurem
 
         kalman_gain = prior_error / (prior_error + measurement_variance + 1e-9)
         post_estimate = prior_estimate + kalman_gain * (prices[i] - prior_estimate)
-        post_error = (1 - kalman_gain) * prior_error
+        post_error = (1.0 - kalman_gain) * prior_error
 
         kalman_estimates[i] = post_estimate
 
-    df["Kalman"] = kalman_estimates
-    print("[Sentinel] Kalman Filter applied to Close prices (Noise Reduction Active).")
+    return kalman_estimates
+
+
+def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5,
+                      measurement_variance: float = 1e-3) -> pd.DataFrame:
+    if df.empty or "Close" not in df.columns:
+        return df
+
+    df = df.copy()
+    prices = df["Close"].to_numpy(dtype=np.float64)
+
+    df["Kalman"] = _kalman_loop(prices, process_variance, measurement_variance)
     return df
 
 
@@ -96,12 +103,13 @@ def add_bollinger_bands(df: pd.DataFrame, window: int = 20, num_std: float = 2.0
 
 
 def generate_signals(
-    df: pd.DataFrame,
-    window: int = 20,
-    rsi_lower: float = 30.0,
-    rsi_upper: float = 70.0,
-    max_vol_zscore: float = 3.0
+        df: pd.DataFrame,
+        window: int = 20,
+        rsi_lower: float = 30.0,
+        rsi_upper: float = 70.0,
+        max_vol_zscore: float = 3.0
 ) -> pd.DataFrame:
+
     df = df.copy()
     sma_col = f"SMA_{window}"
     vol_sma_col = f"Vol_SMA_{window}"
@@ -119,38 +127,23 @@ def generate_signals(
     valid_volume_mask = (df["Volume"] > df[vol_sma_col]) & (vol_zscore <= max_vol_zscore)
 
     raw_buy = (
-        (df["Close"] < df[sma_col] * (1 - margins))
-        & valid_volume_mask
-        & (df["RSI"] < rsi_lower)
+            (df["Close"] < df[sma_col] * (1 - margins))
+            & valid_volume_mask
+            & (df["RSI"] < rsi_lower)
     )
 
     raw_sell = (
-        (df["Close"] > df[sma_col] * (1 + margins))
-        & valid_volume_mask
-        & (df["RSI"] > rsi_upper)
+            (df["Close"] > df[sma_col] * (1 + margins))
+            & valid_volume_mask
+            & (df["RSI"] > rsi_upper)
     )
 
     if "AI_Probability" in df.columns:
-        raw_buy = raw_buy & (df["AI_Probability"] > 0.50)
+        raw_buy = raw_buy & (df["AI_Probability"] > 0.55)
 
-    buy_arr = raw_buy.to_numpy()
-    sell_arr = raw_sell.to_numpy()
-    n = len(df)
+    signals = np.zeros(len(df), dtype=np.int8)
+    signals[raw_buy.to_numpy()] = 1
+    signals[raw_sell.to_numpy()] = -1
 
-    pos_change = np.zeros(n, dtype=np.int8)
-    pos_change[buy_arr] = 1
-    pos_change[sell_arr] = -1
-
-    current_pos = False
-    final_signals = np.zeros(n, dtype=np.int8)
-
-    for i in range(n):
-        if pos_change[i] == 1 and not current_pos:
-            final_signals[i] = 1
-            current_pos = True
-        elif pos_change[i] == -1 and current_pos:
-            final_signals[i] = -1
-            current_pos = False
-
-    df["Signal"] = final_signals
+    df["Signal"] = signals
     return df

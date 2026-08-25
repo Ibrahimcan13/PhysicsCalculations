@@ -30,6 +30,11 @@ def calculate_backtest_metrics(
     gross_losses = abs(sum(t["PnL"] for t in trade_log if t["PnL"] < 0))
     profit_factor = (gross_profits / gross_losses) if gross_losses > 0 else 0.0
 
+    avg_duration = (
+        sum(t["Duration_Days"] for t in trade_log) / total_trades
+        if total_trades > 0 else 0.0
+    )
+
     metrics = {
         "total_pnl": total_pnl,
         "win_rate": win_rate,
@@ -38,12 +43,13 @@ def calculate_backtest_metrics(
         "max_drawdown": abs(max_drawdown),
         "sharpe_ratio": sharpe_ratio,
         "profit_factor": profit_factor,
+        "avg_duration_days": avg_duration,
         "equity_curve": equity_series,
     }
 
     print(
         f"[Sentinel] Backtest Completed -> Net PnL: ${total_pnl:.2f} | Win Rate: {win_rate:.1f}% | "
-        f"Max DD: {abs(max_drawdown):.2f}% | Sharpe: {sharpe_ratio:.2f}"
+        f"Max DD: {abs(max_drawdown):.2f}% | Sharpe: {sharpe_ratio:.2f} | Avg Duration: {avg_duration:.1f} days"
     )
 
     return metrics
@@ -52,7 +58,7 @@ def calculate_backtest_metrics(
 def run_backtest(
         df: pd.DataFrame,
         initial_capital: float = 100.0,
-        position_pct: float = 0.10,  
+        position_pct: float = 0.10,
         commission_rate: float = 0.001,
         slippage_rate: float = 0.0005,
         use_atr_stop: bool = True,
@@ -69,6 +75,7 @@ def run_backtest(
             "max_drawdown": 0.0,
             "sharpe_ratio": 0.0,
             "profit_factor": 0.0,
+            "avg_duration_days": 0.0,
             "equity_curve": pd.Series([initial_capital]),
         }
         return df, [], empty_metrics
@@ -78,6 +85,8 @@ def run_backtest(
     cash = initial_capital
     shares = 0.0
     entry_price = 0.0
+    entry_cost = 0.0
+    entry_date = None
     highest_price_since_entry = 0.0
 
     trade_log = []
@@ -120,10 +129,16 @@ def run_backtest(
                 commission = gross_cash * commission_rate
                 net_returned_cash = gross_cash - commission
 
-                pnl = net_returned_cash - (shares * entry_price)
-                pnl_pct = (pnl / (shares * entry_price + 1e-9)) * 100
+                pnl = net_returned_cash - entry_cost
+                pnl_pct = (pnl / (entry_cost + 1e-9)) * 100
 
                 cash += net_returned_cash
+
+                duration_days = (
+                    (current_date - entry_date).days
+                    if hasattr(current_date - entry_date, "days")
+                    else i
+                )
 
                 reason = "SELL Signal"
                 if hit_stop_loss:
@@ -133,17 +148,21 @@ def run_backtest(
 
                 trade_log.append(
                     {
+                        "Entry_Date": entry_date,
                         "Exit_Date": current_date,
                         "Entry_Price": entry_price,
                         "Exit_Price": sell_price,
                         "PnL": pnl,
                         "PnL_Pct": pnl_pct,
+                        "Duration_Days": duration_days,
                         "Reason": reason,
                     }
                 )
 
                 shares = 0.0
                 entry_price = 0.0
+                entry_cost = 0.0
+                entry_date = None
                 highest_price_since_entry = 0.0
 
         elif shares == 0.0 and signal == 1:
@@ -155,6 +174,8 @@ def run_backtest(
 
             shares = investable_cash / buy_price
             entry_price = buy_price
+            entry_cost = allocated_cash
+            entry_date = current_date
             highest_price_since_entry = current_close
             cash -= allocated_cash
 
@@ -170,17 +191,25 @@ def run_backtest(
         commission = gross_cash * commission_rate
         net_returned_cash = gross_cash - commission
 
-        pnl = net_returned_cash - (shares * entry_price)
-        pnl_pct = (pnl / (shares * entry_price + 1e-9)) * 100
+        pnl = net_returned_cash - entry_cost
+        pnl_pct = (pnl / (entry_cost + 1e-9)) * 100
 
         cash += net_returned_cash
+        duration_days = (
+            (df.index[-1] - entry_date).days
+            if hasattr(df.index[-1] - entry_date, "days")
+            else len(df)
+        )
+
         trade_log.append(
             {
+                "Entry_Date": entry_date,
                 "Exit_Date": df.index[-1],
                 "Entry_Price": entry_price,
                 "Exit_Price": sell_price,
                 "PnL": pnl,
                 "PnL_Pct": pnl_pct,
+                "Duration_Days": duration_days,
                 "Reason": "End of Data (Auto Close)",
             }
         )

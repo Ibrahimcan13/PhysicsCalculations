@@ -34,7 +34,6 @@ def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.
     feature_cols = [col for col in data.columns if col.startswith("Feat_")]
     cleaned_data = data.dropna(subset=feature_cols).copy()
 
-    print(f"[Sentinel] Predictor dataset ready. Total usable rows for prediction: {len(cleaned_data)}")
     return cleaned_data
 
 
@@ -53,16 +52,19 @@ def train_and_predict(
     feature_cols = [col for col in processed_df.columns if col.startswith("Feat_")]
     trainable_df = processed_df.dropna(subset=["Target_Direction"]).copy()
 
-    if len(trainable_df) < train_window + 10:
+    if len(trainable_df) < train_window + forecast_days + 10:
         print(f"[Sentinel] Predictor warning: Too few rows ({len(trainable_df)}) for rolling window size ({train_window}).")
         return df
 
     probabilities = [np.nan] * len(processed_df)
     current_model = None
 
-    for i in range(train_window, len(trainable_df)):
-        if (i - train_window) % retrain_step == 0 or current_model is None:
-            train_chunk = trainable_df.iloc[i - train_window: i]
+    for i in range(train_window + forecast_days, len(trainable_df)):
+        if (i - (train_window + forecast_days)) % retrain_step == 0 or current_model is None:
+            train_end_idx = i - forecast_days
+            train_start_idx = train_end_idx - train_window
+
+            train_chunk = trainable_df.iloc[train_start_idx:train_end_idx]
             X_train = train_chunk[feature_cols]
             y_train = train_chunk["Target_Direction"].astype(int)
 
@@ -85,7 +87,7 @@ def train_and_predict(
     processed_df["AI_Signal"] = (processed_df["AI_Probability"] > 0.55).astype(np.int8)
 
     print(
-        f"[Sentinel] Step-based Walk-Forward completed (n_jobs=-1 Active) "
+        f"[Sentinel] Purged Walk-Forward completed (Gap: {forecast_days}d, n_jobs=-1 Active) "
         f"(Window: {train_window}, Retrain Step: {retrain_step}d). "
         f"Features: {feature_cols}"
     )
