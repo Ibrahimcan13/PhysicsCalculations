@@ -57,8 +57,8 @@ def calculate_backtest_metrics(
 
 def run_backtest(
         df: pd.DataFrame,
-        initial_capital: float = 100.0,
-        position_pct: float = 0.10,
+        initial_capital: float = 1000.0,
+        risk_per_trade: float = 0.02,
         commission_rate: float = 0.001,
         slippage_rate: float = 0.0005,
         use_atr_stop: bool = True,
@@ -168,7 +168,15 @@ def run_backtest(
         elif shares == 0.0 and signal == 1:
             buy_price = current_close * (1 + slippage_rate)
 
-            allocated_cash = cash * position_pct
+            if atr_val > 0.0 and use_atr_stop:
+                risk_amount = cash * risk_per_trade
+                stop_distance = atr_val * atr_multiplier
+                raw_shares = risk_amount / (stop_distance + 1e-9)
+
+                allocated_cash = min(cash * 0.95, raw_shares * buy_price)
+            else:
+                allocated_cash = cash * 0.10
+
             commission = allocated_cash * commission_rate
             investable_cash = allocated_cash - commission
 

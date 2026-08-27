@@ -170,4 +170,4 @@ def plot_signals(
         print(f"[Sentinel] Plot saved to {save_path}")
 
     plt.show()
-    plt.close(fig)
+    plt.close("all")

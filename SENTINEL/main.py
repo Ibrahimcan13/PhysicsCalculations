@@ -1,3 +1,4 @@
+import logging
 import traceback
 from datetime import datetime
 import pandas as pd
@@ -15,6 +16,12 @@ from data_loader import fetch_market_data, save_data_to_parquet
 from predictor import train_and_predict
 from visualizer import plot_signals
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+
 
 def get_valid_date(prompt: str) -> datetime:
     while True:
@@ -23,7 +30,7 @@ def get_valid_date(prompt: str) -> datetime:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             return dt
         except ValueError:
-            print("[Error] Invalid format! Please use YYYY-MM-DD (e.g., 2026-01-01).")
+            logging.error("Invalid format! Please use YYYY-MM-DD (e.g., 2026-01-01).")
 
 
 def get_valid_window_size(prompt: str, default: int, min_val: int = 1) -> int:
@@ -32,54 +39,57 @@ def get_valid_window_size(prompt: str, default: int, min_val: int = 1) -> int:
     ).strip()
 
     if not window_str:
-        print(f"[Sentinel] Using default size: {default}.")
+        logging.info(f"Using default size: {default}.")
         return default
 
     if window_str.isdigit() and int(window_str) >= min_val:
         window_size = int(window_str)
-        print(f"[Sentinel] Window size set to: {window_size}.")
+        logging.info(f"Window size set to: {window_size}.")
         return window_size
     else:
-        print(f"[Warning] Invalid input (Must be >= {min_val}). Falling back to default: {default}.")
+        logging.warning(f"Invalid input (Must be >= {min_val}). Falling back to default: {default}.")
         return default
 
 
 def get_valid_float(prompt: str, default: float) -> float:
     val_str = input(f"{prompt} [Press Enter for Default: ${default:.2f}]: ").strip()
     if not val_str:
-        print(f"[Sentinel] Using default initial capital: ${default:.2f}")
+        logging.info(f"Using default initial capital: ${default:.2f}")
         return default
     try:
         val = float(val_str)
         if val > 0:
-            print(f"[Sentinel] Initial capital set to: ${val:.2f}")
+            logging.info(f"Initial capital set to: ${val:.2f}")
             return val
         else:
-            print(f"[Warning] Must be greater than 0. Using default: ${default:.2f}")
+            logging.warning(f"Must be greater than 0. Using default: ${default:.2f}")
             return default
     except ValueError:
-        print(f"[Warning] Invalid number. Using default: ${default:.2f}")
+        logging.warning(f"Invalid number. Using default: ${default:.2f}")
         return default
 
 
 def run_sentinel():
     print("           PROJECT SENTINEL             ")
 
-
     try:
         user_ticker = input("Enter asset ticker (e.g., RACE, AAPL): ").strip().upper()
         if not user_ticker:
-            print("[Error] Ticker cannot be empty. Aborting.")
+            logging.error("Ticker cannot be empty. Aborting.")
             return
 
         print("\n[Configuration]")
-        initial_capital = get_valid_float("Enter starting capital in USD", default=100.0)
+        initial_capital = get_valid_float("Enter starting capital in USD", default=1000.0)
         window_size = get_valid_window_size("Enter analysis SMA window size in days", default=20)
         rsi_window = get_valid_window_size("Enter RSI window size in days", default=14)
 
         train_window = get_valid_window_size(
             "Enter AI Training Window size (bars/days)", default=200, min_val=100
         )
+
+        forecast_days = 5
+        retrain_step = 20
+        risk_per_trade = 0.02
 
         print("\n[Date Configuration]")
         today = datetime.now()
@@ -89,19 +99,18 @@ def run_sentinel():
             end_dt = get_valid_date("Enter End Date (YYYY-MM-DD): ")
 
             if start_dt > today or end_dt > today:
-                print("[Security Alert] Dates cannot be in the future!")
-                print(f"Current System Date: {today.strftime('%Y-%m-%d')}\n")
+                logging.warning(f"Dates cannot be in the future! Current System Date: {today.strftime('%Y-%m-%d')}\n")
                 continue
 
             if start_dt >= end_dt:
-                print("[Security Alert] Start date must be BEFORE the end date!\n")
+                logging.warning("Start date must be BEFORE the end date!\n")
                 continue
 
             days_difference = (end_dt - start_dt).days
             min_required = train_window + max(window_size, rsi_window) + 14
             if days_difference < min_required:
-                print(f"[Security Alert] Date range is too short ({days_difference} days).")
-                print(f"Sentinel requires AT LEAST {min_required} days of data for AI model & indicators!\n")
+                logging.warning(
+                    f"Date range is too short ({days_difference} days). Requires AT LEAST {min_required} days!\n")
                 continue
 
             break
@@ -109,32 +118,38 @@ def run_sentinel():
         start_date = start_dt.strftime("%Y-%m-%d")
         end_date = end_dt.strftime("%Y-%m-%d")
 
-        print(f"\n[Sentinel] Fetching {user_ticker} data from {start_date} to {end_date}...")
+        logging.info(f"Fetching {user_ticker} data from {start_date} to {end_date}...")
         df = fetch_market_data(user_ticker, start_date, end_date)
         if df.empty:
-            print("[Error] Failed to fetch market data. Terminating.")
+            logging.error("Failed to fetch market data. Terminating.")
             return
 
+        logging.info("Calculating technical indicators & Kalman Filter...")
         df = add_kalman_filter(df)
         df = calculate_moving_average(df, window=window_size)
         df = add_rsi(df, window=rsi_window)
         df = calculate_average_true_range(df, window=14)
         df = add_bollinger_bands(df, window=window_size, num_std=2.0)
 
-        forecast_days = 5
+        logging.info("Executing Walk-Forward AI Training & Inference Pipeline...")
         df = train_and_predict(
             df,
             forecast_days=forecast_days,
             train_window=train_window,
-            retrain_step=20
+            retrain_step=retrain_step
         )
 
+        logging.info("Generating Trading Signals & Executing Backtest Engine...")
         df = generate_signals(df, window=window_size)
+
         df, trade_log, metrics = run_backtest(
             df,
             initial_capital=initial_capital,
-            position_pct=0.10,
-            commission_rate=0.001
+            risk_per_trade=risk_per_trade,
+            commission_rate=0.001,
+            slippage_rate=0.0005,
+            use_atr_stop=True,
+            atr_multiplier=2.0
         )
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -148,8 +163,7 @@ def run_sentinel():
         )
         latest_price = df["Close"].iloc[-1]
 
-
-        print("          SENTINEL STATUS REPORT         ")
+        print("          SENTINEL STATUS REPORT                  ")
         print(f"Target Asset       : {user_ticker}")
         print(f"Starting Capital   : ${initial_capital:.2f}")
         print(f"Latest Close Price : ${latest_price:.2f}")
@@ -173,6 +187,7 @@ def run_sentinel():
         else:
             print("AI FORECAST            : Insufficient data for prediction window.")
 
+        logging.info("Rendering signals & portfolio performance plot...")
         plot_signals(
             df,
             ticker=user_ticker,
@@ -183,10 +198,10 @@ def run_sentinel():
         )
 
     except KeyboardInterrupt:
-        print("\n[Sentinel] Operation cancelled by user. Exiting safely.")
+        logging.warning("Operation cancelled by user. Exiting safely.")
     except Exception as e:
-        print(f"\n[Sentinel Fatal Error] An unexpected error occurred: {e}")
-
+        logging.error(f"Fatal error encountered: {e}")
+        logging.debug(traceback.format_exc())
 
 
 if __name__ == "__main__":

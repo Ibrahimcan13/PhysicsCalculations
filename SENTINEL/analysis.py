@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def _kalman_loop(prices: np.ndarray, process_variance: float, measurement_variance: float) -> np.ndarray:
+def _kalman_loop(prices: np.ndarray, r_variances: np.ndarray, base_q: float = 1e-5) -> np.ndarray:
     n = len(prices)
     kalman_estimates = np.zeros(n, dtype=np.float64)
     if n == 0:
@@ -13,9 +13,9 @@ def _kalman_loop(prices: np.ndarray, process_variance: float, measurement_varian
 
     for i in range(n):
         prior_estimate = post_estimate
-        prior_error = post_error + process_variance
+        prior_error = post_error + base_q
 
-        kalman_gain = prior_error / (prior_error + measurement_variance + 1e-9)
+        kalman_gain = prior_error / (prior_error + r_variances[i] + 1e-9)
         post_estimate = prior_estimate + kalman_gain * (prices[i] - prior_estimate)
         post_error = (1.0 - kalman_gain) * prior_error
 
@@ -24,15 +24,43 @@ def _kalman_loop(prices: np.ndarray, process_variance: float, measurement_varian
     return kalman_estimates
 
 
+def calculate_average_true_range(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
+    required_cols = {"High", "Low", "Close"}
+    if df.empty or not required_cols.issubset(df.columns):
+        print(f"[Warning] DataFrame missing required columns {required_cols}. Skipping ATR calculation.")
+        return df
+
+    df = df.copy()
+    high_low = df["High"] - df["Low"]
+    high_prev_close = (df["High"] - df["Close"].shift(1)).abs()
+    low_prev_close = (df["Low"] - df["Close"].shift(1)).abs()
+
+    true_range = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
+
+    df["ATR"] = true_range.ewm(alpha=1 / window, adjust=False).mean()
+    print(f"[Sentinel] Calculated {window}-period Average True Range (ATR).")
+    return df
+
+
 def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5,
-                      measurement_variance: float = 1e-3) -> pd.DataFrame:
+                      base_measurement_variance: float = 1e-3) -> pd.DataFrame:
     if df.empty or "Close" not in df.columns:
         return df
 
     df = df.copy()
+
+    if "ATR" not in df.columns:
+        df = calculate_average_true_range(df)
+
     prices = df["Close"].to_numpy(dtype=np.float64)
 
-    df["Kalman"] = _kalman_loop(prices, process_variance, measurement_variance)
+    atr_values = df["ATR"].fillna(df["Close"] * 0.02).to_numpy(dtype=np.float64)
+    atr_norm = atr_values / (df["Close"].to_numpy(dtype=np.float64) + 1e-9)
+
+    r_variances = base_measurement_variance / (1.0 + (atr_norm * 100.0))
+
+    df["Kalman"] = _kalman_loop(prices, r_variances, base_q=process_variance)
+    print("[Sentinel] Dynamic ATR-based Kalman Filter applied successfully.")
     return df
 
 
@@ -62,24 +90,6 @@ def add_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
     df["RSI"] = df["RSI"].fillna(50)
 
     print(f"[Sentinel] RSI indicator added using {window}-period EMA.")
-    return df
-
-
-def calculate_average_true_range(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
-    required_cols = {"High", "Low", "Close"}
-    if df.empty or not required_cols.issubset(df.columns):
-        print(f"[Warning] DataFrame missing required columns {required_cols}. Skipping ATR calculation.")
-        return df
-
-    df = df.copy()
-    high_low = df["High"] - df["Low"]
-    high_prev_close = (df["High"] - df["Close"].shift(1)).abs()
-    low_prev_close = (df["Low"] - df["Close"].shift(1)).abs()
-
-    true_range = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
-
-    df["ATR"] = true_range.ewm(alpha=1 / window, adjust=False).mean()
-    print(f"[Sentinel] Calculated {window}-period Average True Range (ATR).")
     return df
 
 

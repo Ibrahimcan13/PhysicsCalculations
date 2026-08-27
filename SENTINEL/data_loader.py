@@ -25,14 +25,16 @@ def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFr
 
 
 def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
+
     if df.empty:
         return df
 
     if hasattr(df.index, 'tz') and df.index.tz is not None:
+        df.index = df.index.tz_convert('UTC').tz_localize(None)
+    else:
         df.index = df.index.tz_localize(None)
 
     df = df.sort_index()
-
     df = df[df.index.dayofweek < 5]
     df = df.dropna(how="all")
 
@@ -40,13 +42,14 @@ def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+
     if df1.empty or df2.empty:
         return df1, df2
 
     common_dates = df1.index.intersection(df2.index)
 
     if common_dates.empty:
-        print("[Warning] No common dates found between the provided DataFrames.")
+        print("[Warning] No common UTC dates found between the provided DataFrames.")
         return pd.DataFrame(), pd.DataFrame()
 
     df1_aligned = df1.loc[common_dates].copy()
@@ -134,7 +137,7 @@ def _fetch_single_ticker(ticker: str, start_date: str, end_date: str, folder: st
         df = _normalize_yfinance_columns(df, ticker=ticker)
         df = clean_market_data(df)
 
-        print(f"[Sentinel] Successfully downloaded {len(df)} rows for {ticker}.")
+        print(f"[Sentinel] Successfully downloaded {len(df)} rows for {ticker} (UTC Normalized).")
 
         save_data_to_parquet(df, ticker=ticker, filename=filename, folder=folder)
         _manage_memory_cache(cache_key, df)

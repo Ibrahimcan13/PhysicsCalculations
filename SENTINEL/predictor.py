@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
 
 
 def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.DataFrame:
@@ -58,6 +59,7 @@ def train_and_predict(
 
     probabilities = [np.nan] * len(processed_df)
     current_model = None
+    scaler = None
 
     for i in range(train_window + forecast_days, len(trainable_df)):
         if (i - (train_window + forecast_days)) % retrain_step == 0 or current_model is None:
@@ -68,6 +70,9 @@ def train_and_predict(
             X_train = train_chunk[feature_cols]
             y_train = train_chunk["Target_Direction"].astype(int)
 
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+
             current_model = RandomForestClassifier(
                 n_estimators=50,
                 max_depth=5,
@@ -76,10 +81,11 @@ def train_and_predict(
                 n_jobs=-1,
                 random_state=42
             )
-            current_model.fit(X_train, y_train)
+            current_model.fit(X_train_scaled, y_train)
 
         X_test = trainable_df.iloc[[i]][feature_cols]
-        probabilities[i] = current_model.predict_proba(X_test)[0, 1]
+        X_test_scaled = scaler.transform(X_test)
+        probabilities[i] = current_model.predict_proba(X_test_scaled)[0, 1]
 
     processed_df["AI_Probability"] = probabilities
     processed_df["AI_Probability"] = processed_df["AI_Probability"].fillna(0.50)
@@ -87,7 +93,7 @@ def train_and_predict(
     processed_df["AI_Signal"] = (processed_df["AI_Probability"] > 0.55).astype(np.int8)
 
     print(
-        f"[Sentinel] Purged Walk-Forward completed (Gap: {forecast_days}d, n_jobs=-1 Active) "
+        f"[Sentinel] Purged Walk-Forward completed with StandardScaler (Gap: {forecast_days}d, n_jobs=-1 Active) "
         f"(Window: {train_window}, Retrain Step: {retrain_step}d). "
         f"Features: {feature_cols}"
     )
