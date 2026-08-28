@@ -67,7 +67,8 @@ def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5,
 def calculate_moving_average(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     df = df.copy()
     df[f"SMA_{window}"] = df["Close"].rolling(window=window).mean()
-    df[f"Vol_SMA_{window}"] = df["Volume"].rolling(window=window).mean()
+    if "Volume" in df.columns:
+        df[f"Vol_SMA_{window}"] = df["Volume"].rolling(window=window).mean()
     print(f"[Sentinel] Calculated {window}-day Moving Average and Volume SMA.")
     return df
 
@@ -119,13 +120,15 @@ def generate_signals(
         rsi_upper: float = 70.0,
         max_vol_zscore: float = 3.0
 ) -> pd.DataFrame:
-
     df = df.copy()
     sma_col = f"SMA_{window}"
     vol_sma_col = f"Vol_SMA_{window}"
 
     if sma_col not in df.columns or vol_sma_col not in df.columns:
         df = calculate_moving_average(df, window=window)
+
+    if "RSI" not in df.columns:
+        df = add_rsi(df)
 
     if "Kalman" not in df.columns:
         df = add_kalman_filter(df)
@@ -151,9 +154,8 @@ def generate_signals(
     if "AI_Probability" in df.columns:
         raw_buy = raw_buy & (df["AI_Probability"] > 0.55)
 
-    signals = np.zeros(len(df), dtype=np.int8)
-    signals[raw_buy.to_numpy()] = 1
-    signals[raw_sell.to_numpy()] = -1
+    conditions = [raw_buy, raw_sell]
+    choices = [1, -1]
 
-    df["Signal"] = signals
+    df["Signal"] = np.select(conditions, choices, default=0).astype(np.int8)
     return df
