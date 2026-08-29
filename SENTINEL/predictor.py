@@ -4,7 +4,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 
-def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.DataFrame:
+def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5, z_window: int = 20) -> pd.DataFrame:
     if df.empty:
         return df
 
@@ -13,28 +13,43 @@ def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5) -> pd.
     data["Feat_Return"] = data["Close"].pct_change().fillna(0.0)
 
     if "RSI" in data.columns:
-        data["Feat_RSI"] = (data["RSI"] / 100.0).fillna(0.50)
+        data["Feat_RSI_Norm"] = ((data["RSI"] - 50.0) / 50.0).fillna(0.0)
     else:
-        data["Feat_RSI"] = 0.50
+        data["Feat_RSI_Norm"] = 0.0
 
     if "ATR" in data.columns:
-        data["Feat_ATR_Ratio"] = (data["ATR"] / (data["Close"] + 1e-9)).fillna(0.0)
+        atr_ratio = data["ATR"] / (data["Close"] + 1e-9)
+        mean_atr = atr_ratio.rolling(z_window).mean()
+        std_atr = atr_ratio.rolling(z_window).std().replace(0, 1e-9)
+        data["Feat_ATR_ZScore"] = ((atr_ratio - mean_atr) / (std_atr + 1e-9)).fillna(0.0)
     else:
-        data["Feat_ATR_Ratio"] = 0.0
+        data["Feat_ATR_ZScore"] = 0.0
 
     if "Kalman" in data.columns:
-        data["Feat_Kalman_Ratio"] = (data["Close"] / (data["Kalman"] + 1e-9)).fillna(1.0)
+        kalman_dev = (data["Close"] - data["Kalman"]) / (data["Kalman"] + 1e-9)
+        mean_kdev = kalman_dev.rolling(z_window).mean()
+        std_kdev = kalman_dev.rolling(z_window).std().replace(0, 1e-9)
+        data["Feat_Kalman_ZScore"] = ((kalman_dev - mean_kdev) / (std_kdev + 1e-9)).fillna(0.0)
     else:
-        data["Feat_Kalman_Ratio"] = 1.0
+        data["Feat_Kalman_ZScore"] = 0.0
 
     sma_cols = [col for col in data.columns if col.startswith("SMA_")]
-    if len(sma_cols) >= 2:
-        sorted_smas = sorted(sma_cols, key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0)
-        data["Feat_SMA_Ratio"] = (data[sorted_smas[0]] / (data[sorted_smas[-1]] + 1e-9)).fillna(1.0)
+    if sma_cols:
+        primary_sma = data[sma_cols[0]]
     else:
-        sma_20 = data["Close"].rolling(20).mean()
-        sma_50 = data["Close"].rolling(50).mean()
-        data["Feat_SMA_Ratio"] = (sma_20 / (sma_50 + 1e-9)).fillna(1.0)
+        primary_sma = data["Close"].rolling(20).mean()
+
+    sma_dev = (data["Close"] - primary_sma) / (primary_sma + 1e-9)
+    mean_sdev = sma_dev.rolling(z_window).mean()
+    std_sdev = sma_dev.rolling(z_window).std().replace(0, 1e-9)
+    data["Feat_SMA_Dev_ZScore"] = ((sma_dev - mean_sdev) / (std_sdev + 1e-9)).fillna(0.0)
+
+    if "Volume" in data.columns:
+        mean_vol = data["Volume"].rolling(z_window).mean()
+        std_vol = data["Volume"].rolling(z_window).std().replace(0, 1e-9)
+        data["Feat_Volume_ZScore"] = ((data["Volume"] - mean_vol) / (std_vol + 1e-9)).fillna(0.0)
+    else:
+        data["Feat_Volume_ZScore"] = 0.0
 
     target_series = (data["Close"].shift(-forecast_days) > data["Close"]).astype(float)
     data["Target_Direction"] = target_series.fillna(0.0).astype(int)
@@ -94,7 +109,7 @@ def train_and_predict(
     processed_df["AI_Signal"] = (processed_df["AI_Probability"] > 0.55).astype(np.int8)
 
     print(
-        f"[Sentinel] Purged Walk-Forward completed with Imputed Features (Gap: {forecast_days}d, n_jobs=-1 Active) "
+        f"[Sentinel] Purged Walk-Forward completed with Z-Score Features (Gap: {forecast_days}d, n_jobs=-1 Active) "
         f"(Window: {train_window}, Retrain Step: {retrain_step}d). "
         f"Features: {feature_cols}"
     )

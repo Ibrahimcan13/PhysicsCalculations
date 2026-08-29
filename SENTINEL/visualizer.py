@@ -9,6 +9,7 @@ def plot_signals(
         metrics: dict,
         trade_log: list = None,
         train_window: int = 200,
+        initial_capital: float = 1000.0,
         save_path: str = None
 ) -> None:
 
@@ -129,14 +130,14 @@ def plot_signals(
     if "equity_curve" in metrics and isinstance(metrics["equity_curve"], pd.Series):
         equity = metrics["equity_curve"]
         ax[4].plot(equity.index, equity.values, color="gold", linewidth=1.8, label="Portfolio Equity ($)")
-        ax[4].axhline(100, linestyle="--", color="gray", alpha=0.5, label="Initial Capital ($100)")
+        ax[4].axhline(initial_capital, linestyle="--", color="gray", alpha=0.5, label=f"Initial Capital (${initial_capital:.0f})")
 
         peak_idx = equity.idxmax()
         peak_val = equity.max()
         ax[4].scatter(peak_idx, peak_val, color="cyan", s=100, zorder=6, label=f"Peak (${peak_val:.1f})")
 
-        ax[4].fill_between(equity.index, equity.values, 100, where=(equity.values >= 100), color="lime", alpha=0.15)
-        ax[4].fill_between(equity.index, equity.values, 100, where=(equity.values < 100), color="red", alpha=0.15)
+        ax[4].fill_between(equity.index, equity.values, initial_capital, where=(equity.values >= initial_capital), color="lime", alpha=0.15)
+        ax[4].fill_between(equity.index, equity.values, initial_capital, where=(equity.values < initial_capital), color="red", alpha=0.15)
 
         sharpe = metrics.get("sharpe_ratio", 0.0)
         max_dd = metrics.get("max_drawdown", 0.0)

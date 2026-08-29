@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 
-def _kalman_loop(prices: np.ndarray, r_variances: np.ndarray, base_q: float = 1e-5) -> np.ndarray:
+def _kalman_loop(prices: np.ndarray, r_variances: np.ndarray, q_variances: np.ndarray) -> np.ndarray:
     n = len(prices)
     kalman_estimates = np.zeros(n, dtype=np.float64)
     if n == 0:
@@ -13,7 +13,7 @@ def _kalman_loop(prices: np.ndarray, r_variances: np.ndarray, base_q: float = 1e
 
     for i in range(n):
         prior_estimate = post_estimate
-        prior_error = post_error + base_q
+        prior_error = post_error + q_variances[i]
 
         kalman_gain = prior_error / (prior_error + r_variances[i] + 1e-9)
         post_estimate = prior_estimate + kalman_gain * (prices[i] - prior_estimate)
@@ -36,13 +36,12 @@ def calculate_average_true_range(df: pd.DataFrame, window: int = 14) -> pd.DataF
     low_prev_close = (df["Low"] - df["Close"].shift(1)).abs()
 
     true_range = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
-
     df["ATR"] = true_range.ewm(alpha=1 / window, adjust=False).mean()
     print(f"[Sentinel] Calculated {window}-period Average True Range (ATR).")
     return df
 
 
-def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5,
+def add_kalman_filter(df: pd.DataFrame, base_process_variance: float = 1e-5,
                       base_measurement_variance: float = 1e-3) -> pd.DataFrame:
     if df.empty or "Close" not in df.columns:
         return df
@@ -53,13 +52,13 @@ def add_kalman_filter(df: pd.DataFrame, process_variance: float = 1e-5,
         df = calculate_average_true_range(df)
 
     prices = df["Close"].to_numpy(dtype=np.float64)
-
     atr_values = df["ATR"].fillna(df["Close"] * 0.02).to_numpy(dtype=np.float64)
-    atr_norm = atr_values / (df["Close"].to_numpy(dtype=np.float64) + 1e-9)
+    atr_norm = atr_values / (prices + 1e-9)
 
     r_variances = base_measurement_variance / (1.0 + (atr_norm * 100.0))
+    q_variances = base_process_variance * (1.0 + (atr_norm * 50.0))
 
-    df["Kalman"] = _kalman_loop(prices, r_variances, base_q=process_variance)
+    df["Kalman"] = _kalman_loop(prices, r_variances, q_variances)
     print("[Sentinel] Dynamic ATR-based Kalman Filter applied successfully.")
     return df
 
@@ -116,9 +115,8 @@ def add_bollinger_bands(df: pd.DataFrame, window: int = 20, num_std: float = 2.0
 def generate_signals(
         df: pd.DataFrame,
         window: int = 20,
-        rsi_lower: float = 30.0,
-        rsi_upper: float = 70.0,
-        max_vol_zscore: float = 3.0
+        buy_threshold: float = 0.65,
+        sell_threshold: float = -0.65
 ) -> pd.DataFrame:
     df = df.copy()
     sma_col = f"SMA_{window}"
@@ -135,27 +133,35 @@ def generate_signals(
 
     margins = get_dynamic_margin(df, window)
 
+    dev = (df["Close"] - df[sma_col]) / (df[sma_col] * margins + 1e-9)
+    price_score = np.clip(-dev, -1.0, 1.0)
+
+    rsi_score = np.clip((50.0 - df["RSI"]) / 20.0, -1.0, 1.0)
+
+    kalman_dev = (df["Kalman"] - df["Close"]) / (df["Close"] + 1e-9)
+    kalman_score = np.clip(kalman_dev * 50.0, -1.0, 1.0)
+
     vol_std = df["Volume"].rolling(window=window).std().fillna(1.0)
     vol_zscore = (df["Volume"] - df[vol_sma_col]) / (vol_std + 1e-9)
-    valid_volume_mask = (df["Volume"] > df[vol_sma_col]) & (vol_zscore <= max_vol_zscore)
-
-    raw_buy = (
-            (df["Close"] < df[sma_col] * (1 - margins))
-            & valid_volume_mask
-            & (df["RSI"] < rsi_lower)
-    )
-
-    raw_sell = (
-            (df["Close"] > df[sma_col] * (1 + margins))
-            & valid_volume_mask
-            & (df["RSI"] > rsi_upper)
-    )
+    volume_score = np.clip(vol_zscore / 3.0, 0.0, 1.0)
 
     if "AI_Probability" in df.columns:
-        raw_buy = raw_buy & (df["AI_Probability"] > 0.55)
+        ai_score = (df["AI_Probability"] - 0.5) * 2.0
+    else:
+        ai_score = 0.0
 
-    conditions = [raw_buy, raw_sell]
-    choices = [1, -1]
+    composite_score = (
+            0.25 * price_score +
+            0.25 * rsi_score +
+            0.20 * kalman_score +
+            0.15 * volume_score +
+            0.15 * ai_score
+    )
 
-    df["Signal"] = np.select(conditions, choices, default=0).astype(np.int8)
+    df["Signal_Score"] = composite_score
+
+    df["Signal"] = 0
+    df.loc[df["Signal_Score"] >= buy_threshold, "Signal"] = 1
+    df.loc[df["Signal_Score"] <= sell_threshold, "Signal"] = -1
+
     return df

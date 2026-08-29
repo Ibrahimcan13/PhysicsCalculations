@@ -152,9 +152,7 @@ def run_sentinel():
             atr_multiplier=2.0
         )
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        dynamic_filename = f"{user_ticker}_{timestamp}.parquet"
-        save_data_to_parquet(df, ticker=user_ticker, filename=dynamic_filename)
+        save_data_to_parquet(df, ticker=user_ticker)
 
         latest_prob = (
             df["AI_Probability"].iloc[-1]
@@ -163,7 +161,7 @@ def run_sentinel():
         )
         latest_price = df["Close"].iloc[-1]
 
-        print("          SENTINEL STATUS REPORT                  ")
+        print("\n          SENTINEL STATUS REPORT                  ")
         print(f"Target Asset       : {user_ticker}")
         print(f"Starting Capital   : ${initial_capital:.2f}")
         print(f"Latest Close Price : ${latest_price:.2f}")
@@ -195,6 +193,7 @@ def run_sentinel():
             metrics=metrics,
             trade_log=trade_log,
             train_window=train_window,
+            initial_capital=initial_capital
         )
 
     except KeyboardInterrupt:
