@@ -131,6 +131,13 @@ def run_sentinel():
         df = calculate_average_true_range(df, window=14)
         df = add_bollinger_bands(df, window=window_size, num_std=2.0)
 
+        logging.info("Generating Baseline Trading Signals (Kalman & Technical Based)...")
+        try:
+            df = generate_signals(df, window=window_size, use_kalman=True)
+        except TypeError:
+            df = generate_signals(df, window=window_size)
+
+
         logging.info("Executing Walk-Forward AI Training & Inference Pipeline (Triple Barrier Method)...")
         df = train_and_predict(
             df,
@@ -139,9 +146,7 @@ def run_sentinel():
             retrain_step=retrain_step
         )
 
-        logging.info("Generating Trading Signals & Executing Backtest Engine...")
-        df = generate_signals(df, window=window_size)
-
+        logging.info("Executing Backtest Engine with AI Probability Filtering...")
         df, trade_log, metrics = run_backtest(
             df,
             initial_capital=initial_capital,
@@ -149,7 +154,8 @@ def run_sentinel():
             commission_rate=0.001,
             slippage_rate=0.0005,
             use_atr_stop=True,
-            atr_multiplier=2.0
+            atr_multiplier=2.0,
+            ai_exit_threshold=0.50
         )
 
         save_data_to_parquet(df, ticker=user_ticker)

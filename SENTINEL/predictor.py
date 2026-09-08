@@ -5,19 +5,22 @@ from sklearn.preprocessing import RobustScaler
 
 
 def apply_triple_barrier_labels(
-    df: pd.DataFrame,
-    pt_multiplier: float = 2.0,
-    sl_multiplier: float = 1.0,
-    max_holding_days: int = 5
+        df: pd.DataFrame,
+        pt_multiplier: float = 2.0,
+        sl_multiplier: float = 1.0,
+        max_holding_days: int = 5
 ) -> pd.Series:
 
     if "ATR" not in df.columns or df.empty:
-        return (df["Close"].shift(-max_holding_days) > df["Close"]).astype(int)
+        simple_target = (df["Close"].shift(-max_holding_days) > df["Close"]).astype(float)
+        simple_target.iloc[-max_holding_days:] = np.nan
+        return simple_target
 
     close_prices = df["Close"].to_numpy()
     atr_values = df["ATR"].to_numpy()
     n = len(df)
-    labels = np.zeros(n, dtype=int)
+
+    labels = np.full(n, np.nan, dtype=float)
 
     for i in range(n - max_holding_days):
         entry_price = close_prices[i]
@@ -38,11 +41,11 @@ def apply_triple_barrier_labels(
         first_sl = touch_sl[0] if len(touch_sl) > 0 else max_holding_days + 1
 
         if first_tp < first_sl:
-            labels[i] = 1
+            labels[i] = 1.0
         elif first_sl < first_tp:
-            labels[i] = 0
+            labels[i] = 0.0
         else:
-            labels[i] = 1 if path[-1] > entry_price else 0
+            labels[i] = 1.0 if path[-1] > entry_price else 0.0
 
     return pd.Series(labels, index=df.index)
 
@@ -85,7 +88,8 @@ def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5, z_wind
 
     if "Volume" in data.columns:
         median_vol = data["Volume"].rolling(z_window).median()
-        iqr_vol = (data["Volume"].rolling(z_window).quantile(0.75) - data["Volume"].rolling(z_window).quantile(0.25)) / 1.349
+        iqr_vol = (data["Volume"].rolling(z_window).quantile(0.75) - data["Volume"].rolling(z_window).quantile(
+            0.25)) / 1.349
         data["Feat_Volume_ZScore"] = ((data["Volume"] - median_vol) / (iqr_vol + 1e-9)).fillna(0.0)
     else:
         data["Feat_Volume_ZScore"] = 0.0
@@ -98,10 +102,10 @@ def create_features_and_targets(df: pd.DataFrame, forecast_days: int = 5, z_wind
 
 
 def train_and_predict(
-    df: pd.DataFrame,
-    forecast_days: int = 5,
-    train_window: int = 200,
-    retrain_step: int = 20
+        df: pd.DataFrame,
+        forecast_days: int = 5,
+        train_window: int = 200,
+        retrain_step: int = 20
 ) -> pd.DataFrame:
     processed_df = create_features_and_targets(df, forecast_days=forecast_days)
 
@@ -112,7 +116,8 @@ def train_and_predict(
     feature_cols = [col for col in processed_df.columns if col.startswith("Feat_")]
 
     if len(processed_df) < train_window + forecast_days + 10:
-        print(f"[Sentinel] Predictor warning: Too few rows ({len(processed_df)}) for rolling window size ({train_window}).")
+        print(
+            f"[Sentinel] Predictor warning: Too few rows ({len(processed_df)}) for rolling window size ({train_window}).")
         return df
 
     probabilities = [0.50] * len(processed_df)
@@ -125,8 +130,14 @@ def train_and_predict(
             train_start_idx = train_end_idx - train_window
 
             train_chunk = processed_df.iloc[train_start_idx:train_end_idx]
-            X_train = train_chunk[feature_cols]
-            y_train = train_chunk["Target_Direction"]
+
+            train_chunk_clean = train_chunk.dropna(subset=["Target_Direction"])
+
+            if len(train_chunk_clean) < 30:
+                continue
+
+            X_train = train_chunk_clean[feature_cols]
+            y_train = train_chunk_clean["Target_Direction"].astype(int)
 
             scaler = RobustScaler()
             X_train_scaled = scaler.fit_transform(X_train)

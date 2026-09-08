@@ -20,7 +20,15 @@ def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFr
         else:
             df.columns = df.columns.get_level_values(0)
 
-    df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+    clean_cols = []
+    for col in df.columns:
+        if isinstance(col, tuple):
+            col_name = str(col[0])
+        else:
+            col_name = str(col)
+        clean_cols.append(col_name.strip())
+
+    df.columns = clean_cols
     return df
 
 

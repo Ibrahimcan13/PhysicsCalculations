@@ -10,26 +10,42 @@ def calculate_backtest_metrics(
 ) -> dict:
     total_trades = len(trade_log)
     winning_trades = sum(1 for t in trade_log if t["PnL"] > 0)
-    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
 
-    total_pnl = equity_series.iloc[-1] - initial_capital
+    win_rate = (winning_trades / total_trades * 100.0) if total_trades > 0 else 0.0
+
+    total_pnl = equity_series.iloc[-1] - initial_capital if not equity_series.empty else 0.0
 
     equity_arr = equity_series.to_numpy(dtype=np.float64)
-    peak = np.maximum.accumulate(equity_arr)
-    drawdown = (equity_arr - peak) / (peak + 1e-9)
-    max_drawdown = np.min(drawdown) * 100.0
 
-    daily_returns = np.diff(equity_arr) / (equity_arr[:-1] + 1e-9)
-    mean_return = np.mean(daily_returns) if len(daily_returns) > 0 else 0.0
-    std_return = np.std(daily_returns) if len(daily_returns) > 0 else 0.0
+    if len(equity_arr) > 0:
+        peak = np.maximum.accumulate(equity_arr)
+        drawdown = (equity_arr - peak) / (np.where(peak == 0, 1e-9, peak))
+        max_drawdown = np.min(drawdown) * 100.0
+    else:
+        max_drawdown = 0.0
+
+    if len(equity_arr) > 1:
+        prev_equity = equity_arr[:-1]
+        daily_returns = np.diff(equity_arr) / (np.where(prev_equity == 0, 1e-9, prev_equity))
+        mean_return = np.mean(daily_returns)
+        std_return = np.std(daily_returns)
+    else:
+        mean_return = 0.0
+        std_return = 0.0
 
     sharpe_ratio = (
-        (mean_return / (std_return + 1e-9)) * np.sqrt(252) if std_return > 0 else 0.0
+        (mean_return / std_return) * np.sqrt(252) if std_return > 0.0 else 0.0
     )
 
     gross_profits = sum(t["PnL"] for t in trade_log if t["PnL"] > 0)
     gross_losses = abs(sum(t["PnL"] for t in trade_log if t["PnL"] < 0))
-    profit_factor = (gross_profits / gross_losses) if gross_losses > 0 else 0.0
+
+    if gross_losses > 0.0:
+        profit_factor = gross_profits / gross_losses
+    elif gross_profits > 0.0:
+        profit_factor = float("inf")
+    else:
+        profit_factor = 0.0
 
     avg_duration = (
         sum(t["Duration_Days"] for t in trade_log) / total_trades
