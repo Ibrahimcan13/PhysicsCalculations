@@ -1,174 +1,203 @@
-import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def plot_signals(
-        df: pd.DataFrame,
-        ticker: str,
-        window: int,
-        metrics: dict,
-        trade_log: list = None,
-        train_window: int = 200,
-        initial_capital: float = 1000.0,
-        save_path: str = None
+    df: pd.DataFrame,
+    ticker: str,
+    window: int,
+    metrics: dict,
+    trade_log: list = None,
+    train_window: int = 200,
+    initial_capital: float = 1000.0,
+    save_path: str = None
 ) -> None:
+    if df.empty:
+        print("[Sentinel] Visualizer Error: DataFrame is empty.")
+        return
 
-    plt.style.use("dark_background")
-
-    fig, ax = plt.subplots(
-        5, 1,
-        figsize=(14, 16),
-        sharex=True,
-        gridspec_kw={"height_ratios": [3, 1.2, 1, 1, 1.2]}
+    fig = make_subplots(
+        rows=5,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        subplot_titles=(
+            f"Sentinel: {ticker} Price Analysis & Trading Signals",
+            "AI Bullish Probability (%)",
+            "Relative Strength Index (RSI)",
+            "Volume & ATR Volatility",
+            "Portfolio Equity Curve ($)"
+        ),
+        row_heights=[0.35, 0.15, 0.15, 0.15, 0.20]
     )
 
-    if "Close" in df.columns:
-        ax[0].plot(df.index, df["Close"], label="Price", color="lightgray", alpha=0.8, linewidth=1.5)
+    if all(col in df.columns for col in ["Open", "High", "Low", "Close"]):
+        fig.add_trace(
+            go.Candlestick(
+                x=df.index,
+                open=df["Open"],
+                high=df["High"],
+                low=df["Low"],
+                close=df["Close"],
+                name="Price (OHLC)",
+                increasing_line_color="#26a69a",
+                decreasing_line_color="#ef5350"
+            ),
+            row=1, col=1
+        )
+    elif "Close" in df.columns:
+        fig.add_trace(
+            go.Scatter(x=df.index, y=df["Close"], mode="lines", name="Close Price", line=dict(color="#cccccc", width=1.5)),
+            row=1, col=1
+        )
 
     if "Kalman" in df.columns:
-        ax[0].plot(df.index, df["Kalman"], label="Kalman Filter (Trend)", color="cyan", linestyle="-", linewidth=1.2, alpha=0.9)
+        fig.add_trace(
+            go.Scatter(x=df.index, y=df["Kalman"], mode="lines", name="Kalman Filter", line=dict(color="#00e5ff", width=1.5)),
+            row=1, col=1
+        )
 
     sma_col = f"SMA_{window}"
+    if sma_col in df.columns:
+        fig.add_trace(
+            go.Scatter(x=df.index, y=df[sma_col], mode="lines", name=f"SMA {window}", line=dict(color="#ffd700", width=1.2, dash="dash")),
+            row=1, col=1
+        )
+
     bb_upper_col = f"BB_Upper_{window}"
     bb_lower_col = f"BB_Lower_{window}"
-
-    if sma_col in df.columns:
-        ax[0].plot(df.index, df[sma_col], label=f"SMA {window}", color="gold", linestyle="--", linewidth=1.5)
-
     if bb_upper_col in df.columns and bb_lower_col in df.columns:
-        ax[0].plot(df.index, df[bb_upper_col], label="BB Upper", color="purple", linestyle=":", alpha=0.7)
-        ax[0].plot(df.index, df[bb_lower_col], label="BB Lower", color="purple", linestyle=":", alpha=0.7)
-        ax[0].fill_between(df.index, df[bb_upper_col], df[bb_lower_col], color="cyan", alpha=0.03, label="BB Range")
+        fig.add_trace(
+            go.Scatter(x=df.index, y=df[bb_upper_col], mode="lines", name="BB Upper", line=dict(color="#ab47bc", width=1, dash="dot")),
+            row=1, col=1
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df.index, y=df[bb_lower_col], mode="lines", name="BB Lower",
+                line=dict(color="#ab47bc", width=1, dash="dot"),
+                fill="tonexty", fillcolor="rgba(0, 229, 255, 0.03)"
+            ),
+            row=1, col=1
+        )
 
-    buy_signals = df[df["Signal"] == 1] if "Signal" in df.columns else pd.DataFrame()
-    sell_signals = df[df["Signal"] == -1] if "Signal" in df.columns else pd.DataFrame()
+    if "Signal" in df.columns:
+        buy_signals = df[df["Signal"] == 1]
+        sell_signals = df[df["Signal"] == -1]
 
-    if not buy_signals.empty and "Close" in buy_signals.columns:
-        ax[0].scatter(buy_signals.index, buy_signals["Close"], label="BUY", color="lime", marker="^", s=120, zorder=5)
-        for idx, row in buy_signals.iterrows():
-            rsi_val = f"{row['RSI']:.1f}" if "RSI" in row else "N/A"
-            ai_val = f"{row['AI_Probability']*100:.1f}%" if "AI_Probability" in row else "N/A"
-            ax[0].annotate(
-                f"BUY\nRSI:{rsi_val}\nAI:{ai_val}",
-                (idx, row["Close"]),
-                xytext=(0, -35), textcoords="offset points",
-                ha='center', fontsize=7, color='lime',
-                bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.6, edgecolor="lime"),
-                arrowprops=dict(arrowstyle="->", color="lime", lw=0.8)
+        if not buy_signals.empty and "Close" in buy_signals.columns:
+            hover_buy = [
+                f"BUY Signal<br>RSI: {row.get('RSI', 0):.1f}<br>AI Prob: {row.get('AI_Probability', 0)*100:.1f}%"
+                for _, row in buy_signals.iterrows()
+            ]
+            fig.add_trace(
+                go.Scatter(
+                    x=buy_signals.index, y=buy_signals["Close"], mode="markers", name="BUY",
+                    marker=dict(symbol="triangle-up", size=12, color="#00ff00"),
+                    hovertext=hover_buy, hoverinfo="text+x+y"
+                ),
+                row=1, col=1
             )
 
-    if not sell_signals.empty and "Close" in sell_signals.columns:
-        ax[0].scatter(sell_signals.index, sell_signals["Close"], label="SELL", color="red", marker="v", s=120, zorder=5)
-        for idx, row in sell_signals.iterrows():
-            ax[0].annotate(
-                "SELL",
-                (idx, row["Close"]),
-                xytext=(0, 25), textcoords="offset points",
-                ha='center', fontsize=7, color='red',
-                bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.6, edgecolor="red"),
-                arrowprops=dict(arrowstyle="->", color="red", lw=0.8)
+        if not sell_signals.empty and "Close" in sell_signals.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=sell_signals.index, y=sell_signals["Close"], mode="markers", name="SELL",
+                    marker=dict(symbol="triangle-down", size=12, color="#ff0000"),
+                    hovertext="SELL Signal", hoverinfo="text+x+y"
+                ),
+                row=1, col=1
             )
 
     if trade_log:
+        stop_dates, stop_prices = [], []
         for trade in trade_log:
-            exit_reason = trade.get("Reason", trade.get("exit_reason", ""))
-            exit_date = trade.get("Exit_Date", trade.get("exit_date"))
-            exit_price = trade.get("Exit_Price", trade.get("exit_price"))
+            exit_reason = str(trade.get("Reason", trade.get("exit_reason", ""))).upper()
+            if "STOP" in exit_reason:
+                stop_dates.append(trade.get("Exit_Date", trade.get("exit_date")))
+                stop_prices.append(trade.get("Exit_Price", trade.get("exit_price")))
 
-            if exit_date and exit_price and "STOP" in str(exit_reason).upper():
-                ax[0].scatter(exit_date, exit_price, color="orange", marker="X", s=140, zorder=6, label="Stop-Loss Hit")
+        if stop_dates:
+            fig.add_trace(
+                go.Scatter(
+                    x=stop_dates, y=stop_prices, mode="markers", name="Stop-Loss Hit",
+                    marker=dict(symbol="x", size=12, color="#ff9800", line=dict(width=2))
+                ),
+                row=1, col=1
+            )
 
-    if len(df) > train_window and "Close" in df.columns:
+    if len(df) > train_window:
         split_date = df.index[train_window]
-        for a in ax:
-            a.axvline(split_date, color="yellow", linestyle="--", alpha=0.5, linewidth=1.2)
-        ax[0].text(split_date, df["Close"].max(), "  Live Walk-Forward Start", color="yellow", fontsize=9, verticalalignment="top")
-
-    ax[0].set_title(f"Sentinel: {ticker} Market Analysis (AI-Enhanced Signals & Kalman Filter)", fontsize=14, pad=15)
-    ax[0].set_ylabel("Price (USD)", fontsize=11)
-    ax[0].grid(True, linestyle=":", alpha=0.3)
-    ax[0].legend(loc="upper left", framealpha=0.5)
+        fig.add_vline(x=split_date, line_width=1.5, line_dash="dash", line_color="#ffff00", row="all", col=1)
 
     if "AI_Probability" in df.columns:
         ai_prob = df["AI_Probability"] * 100
-        ax[1].plot(df.index, ai_prob, color="cyan", linewidth=1.5, label="AI Bullish Probability (%)")
-        ax[1].axhline(50, linestyle="--", color="gray", alpha=0.7, label="Neutral (50%)")
-        ax[1].axhline(55, linestyle=":", color="lime", alpha=0.8, label="Buy Threshold (55%)")
-        ax[1].fill_between(df.index, ai_prob, 50, where=(ai_prob >= 50), color="lime", alpha=0.15)
-        ax[1].fill_between(df.index, ai_prob, 50, where=(ai_prob < 50), color="red", alpha=0.15)
-        ax[1].set_ylim(0, 100)
-        ax[1].set_ylabel("AI Prob (%)", fontsize=11)
-        ax[1].grid(True, linestyle=":", alpha=0.3)
-        ax[1].legend(loc="upper left", framealpha=0.5)
+        fig.add_trace(
+            go.Scatter(x=df.index, y=ai_prob, mode="lines", name="AI Prob (%)", line=dict(color="#00e5ff", width=1.5)),
+            row=2, col=1
+        )
+        fig.add_hline(y=50, line_dash="dash", line_color="gray", row=2, col=1)
+        fig.add_hline(y=55, line_dash="dot", line_color="#00ff00", row=2, col=1)
 
     if "RSI" in df.columns:
-        ax[2].plot(df.index, df["RSI"], color="magenta", linewidth=1.2, label="RSI")
-        ax[2].axhline(70, linestyle="--", color="red", alpha=0.6, label="Overbought (70)")
-        ax[2].axhline(30, linestyle="--", color="lime", alpha=0.6, label="Oversold (30)")
-        ax[2].fill_between(df.index, 70, 30, color="purple", alpha=0.08)
-        ax[2].set_ylim(0, 100)
-        ax[2].set_ylabel("RSI", fontsize=11)
-        ax[2].grid(True, linestyle=":", alpha=0.3)
-        ax[2].legend(loc="upper left", framealpha=0.5)
+        fig.add_trace(
+            go.Scatter(x=df.index, y=df["RSI"], mode="lines", name="RSI", line=dict(color="#e040fb", width=1.2)),
+            row=3, col=1
+        )
+        fig.add_hline(y=70, line_dash="dash", line_color="#ff1744", row=3, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="#00e676", row=3, col=1)
 
     if "Volume" in df.columns:
-        ax[3].bar(df.index, df["Volume"], color="skyblue", alpha=0.3, width=0.8, label="Volume")
+        fig.add_trace(
+            go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color="#29b6f6", opacity=0.4),
+            row=4, col=1
+        )
         vol_sma_col = f"Vol_SMA_{window}"
         if vol_sma_col in df.columns:
-            ax[3].plot(df.index, df[vol_sma_col], color="orange", linestyle="-.", linewidth=1.2, label=f"Vol SMA {window}")
-        ax[3].set_ylabel("Volume", fontsize=11)
-        ax[3].grid(True, linestyle=":", alpha=0.3)
-        ax[3].legend(loc="upper left", framealpha=0.5)
-
-    if "ATR" in df.columns:
-        ax_atr = ax[3].twinx()
-        ax_atr.plot(df.index, df["ATR"], color="orange", linewidth=1.2, linestyle=":", label="ATR (Volatility)")
-        ax_atr.set_ylabel("ATR ($)", fontsize=10, color="orange")
-        ax_atr.tick_params(axis='y', labelcolor="orange")
-        ax_atr.legend(loc="upper right", framealpha=0.5)
+            fig.add_trace(
+                go.Scatter(x=df.index, y=df[vol_sma_col], mode="lines", name=f"Vol SMA {window}", line=dict(color="#ff9800", width=1.2)),
+                row=4, col=1
+            )
 
     if "equity_curve" in metrics and isinstance(metrics["equity_curve"], pd.Series):
         equity = metrics["equity_curve"]
-        ax[4].plot(equity.index, equity.values, color="gold", linewidth=1.8, label="Portfolio Equity ($)")
-        ax[4].axhline(initial_capital, linestyle="--", color="gray", alpha=0.5, label=f"Initial Capital (${initial_capital:.0f})")
-
-        peak_idx = equity.idxmax()
-        peak_val = equity.max()
-        ax[4].scatter(peak_idx, peak_val, color="cyan", s=100, zorder=6, label=f"Peak (${peak_val:.1f})")
-
-        ax[4].fill_between(equity.index, equity.values, initial_capital, where=(equity.values >= initial_capital), color="lime", alpha=0.15)
-        ax[4].fill_between(equity.index, equity.values, initial_capital, where=(equity.values < initial_capital), color="red", alpha=0.15)
-
-        sharpe = metrics.get("sharpe_ratio", 0.0)
-        max_dd = metrics.get("max_drawdown", 0.0)
-        win_rate = metrics.get("win_rate", 0.0)
-        total_pnl = metrics.get("total_pnl", 0.0)
+        fig.add_trace(
+            go.Scatter(x=equity.index, y=equity.values, mode="lines", name="Portfolio Equity", line=dict(color="#ffd700", width=2)),
+            row=5, col=1
+        )
+        fig.add_hline(y=initial_capital, line_dash="dash", line_color="gray", row=5, col=1)
 
         stats_text = (
-            f"Net PnL: ${total_pnl:.2f}\n"
-            f"Win Rate: %{win_rate:.1f}\n"
-            f"Max DD: %{max_dd:.2f}\n"
-            f"Sharpe: {sharpe:.2f}"
+            f"<b>Net PnL:</b> ${metrics.get('total_pnl', 0.0):.2f}<br>"
+            f"<b>Win Rate:</b> %{metrics.get('win_rate', 0.0):.1f}<br>"
+            f"<b>Max DD:</b> %{metrics.get('max_drawdown', 0.0):.2f}<br>"
+            f"<b>Sharpe:</b> {metrics.get('sharpe_ratio', 0.0):.2f}"
+        )
+        fig.add_annotation(
+            xref="paper", yref="paper",
+            x=0.99, y=0.02,
+            text=stats_text,
+            showarrow=False,
+            align="right",
+            bordercolor="#ffd700",
+            borderwidth=1,
+            borderpad=6,
+            bgcolor="rgba(0, 0, 0, 0.8)",
+            font=dict(color="#ffffff", size=11)
         )
 
-        ax[4].text(
-            0.98, 0.90, stats_text,
-            transform=ax[4].transAxes,
-            fontsize=9,
-            verticalalignment="top",
-            horizontalalignment="right",
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="black", alpha=0.7, edgecolor="gold")
-        )
-
-        ax[4].set_ylabel("Equity ($)", fontsize=11)
-        ax[4].grid(True, linestyle=":", alpha=0.3)
-        ax[4].legend(loc="upper left", framealpha=0.5)
-
-    plt.tight_layout()
+    fig.update_layout(
+        template="plotly_dark",
+        title=dict(text=f"PROJECT SENTINEL — {ticker} Interactive Analysis", font=dict(size=18)),
+        height=1000,
+        showlegend=True,
+        xaxis_rangeslider_visible=False,
+        margin=dict(l=50, r=50, t=60, b=40)
+    )
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-        print(f"[Sentinel] Plot saved to {save_path}")
-
-    plt.show()
-    plt.close("all")
+        path = save_path if save_path.endswith(".html") else f"{save_path}.html"
+        fig.write_html(path)
+        print(f"[Sentinel] Interactive Plotly dashboard saved to {path}")
+    else:
+        fig.show()

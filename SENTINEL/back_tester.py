@@ -14,13 +14,14 @@ def calculate_backtest_metrics(
 
     total_pnl = equity_series.iloc[-1] - initial_capital
 
-    peak = equity_series.cummax()
-    drawdown = (equity_series - peak) / (peak + 1e-9)
-    max_drawdown = drawdown.min() * 100
+    equity_arr = equity_series.to_numpy(dtype=np.float64)
+    peak = np.maximum.accumulate(equity_arr)
+    drawdown = (equity_arr - peak) / (peak + 1e-9)
+    max_drawdown = np.min(drawdown) * 100.0
 
-    daily_returns = equity_series.pct_change().dropna()
-    mean_return = daily_returns.mean()
-    std_return = daily_returns.std()
+    daily_returns = np.diff(equity_arr) / (equity_arr[:-1] + 1e-9)
+    mean_return = np.mean(daily_returns) if len(daily_returns) > 0 else 0.0
+    std_return = np.std(daily_returns) if len(daily_returns) > 0 else 0.0
 
     sharpe_ratio = (
         (mean_return / (std_return + 1e-9)) * np.sqrt(252) if std_return > 0 else 0.0
@@ -82,6 +83,23 @@ def run_backtest(
 
     df = df.copy()
 
+    dates = df.index.to_numpy()
+    close_arr = df["Close"].to_numpy(dtype=np.float64)
+    high_arr = df["High"].to_numpy(dtype=np.float64)
+    signal_arr = df["Signal"].to_numpy(dtype=np.int8)
+
+    ai_prob_arr = (
+        df["AI_Probability"].to_numpy(dtype=np.float64)
+        if "AI_Probability" in df.columns
+        else np.full(len(df), np.nan)
+    )
+
+    atr_arr = (
+        df["ATR"].to_numpy(dtype=np.float64)
+        if "ATR" in df.columns
+        else np.zeros(len(df), dtype=np.float64)
+    )
+
     cash = initial_capital
     shares = 0.0
     entry_price = 0.0
@@ -90,24 +108,18 @@ def run_backtest(
     highest_price_since_entry = 0.0
 
     trade_log = []
-    equity_list = []
+    equity_list = np.zeros(len(df), dtype=np.float64)
 
     for i in range(len(df)):
-        current_date = df.index[i]
-        current_close = df["Close"].iloc[i]
-        current_high = df["High"].iloc[i]
-        signal = df["Signal"].iloc[i]
-        ai_prob = (
-            df["AI_Probability"].iloc[i]
-            if "AI_Probability" in df.columns
-            else None
-        )
-        atr_val = df["ATR"].iloc[i] if "ATR" in df.columns else 0.0
+        current_date = dates[i]
+        current_close = close_arr[i]
+        current_high = high_arr[i]
+        signal = signal_arr[i]
+        ai_prob = ai_prob_arr[i]
+        atr_val = atr_arr[i]
 
         if shares > 0.0:
-            highest_price_since_entry = max(
-                highest_price_since_entry, current_high
-            )
+            highest_price_since_entry = max(highest_price_since_entry, current_high)
 
             stop_loss_price = (
                 highest_price_since_entry - (atr_val * atr_multiplier)
@@ -117,27 +129,25 @@ def run_backtest(
 
             hit_stop_loss = use_atr_stop and (current_close <= stop_loss_price)
             ai_bearish_exit = (
-                    ai_prob is not None
-                    and not np.isnan(ai_prob)
-                    and (ai_prob < ai_exit_threshold)
+                    not np.isnan(ai_prob) and (ai_prob < ai_exit_threshold)
             )
             standard_sell_signal = (signal == -1)
 
             if hit_stop_loss or ai_bearish_exit or standard_sell_signal:
-                sell_price = current_close * (1 - slippage_rate)
+                sell_price = current_close * (1.0 - slippage_rate)
                 gross_cash = shares * sell_price
                 commission = gross_cash * commission_rate
                 net_returned_cash = gross_cash - commission
 
                 pnl = net_returned_cash - entry_cost
-                pnl_pct = (pnl / (entry_cost + 1e-9)) * 100
+                pnl_pct = (pnl / (entry_cost + 1e-9)) * 100.0
 
                 cash += net_returned_cash
 
                 duration_days = (
-                    (current_date - entry_date).days
-                    if hasattr(current_date - entry_date, "days")
-                    else i
+                    (pd.Timestamp(current_date) - pd.Timestamp(entry_date)).days
+                    if entry_date is not None
+                    else 0
                 )
 
                 reason = "SELL Signal"
@@ -166,7 +176,7 @@ def run_backtest(
                 highest_price_since_entry = 0.0
 
         elif shares == 0.0 and signal == 1:
-            buy_price = current_close * (1 + slippage_rate)
+            buy_price = current_close * (1.0 + slippage_rate)
 
             if atr_val > 0.0 and use_atr_stop:
                 risk_amount = cash * risk_per_trade
@@ -187,32 +197,29 @@ def run_backtest(
             highest_price_since_entry = current_close
             cash -= allocated_cash
 
-        current_equity = cash + (
-            shares * current_close if shares > 0.0 else 0.0
-        )
-        equity_list.append(current_equity)
+        equity_list[i] = cash + (shares * current_close if shares > 0.0 else 0.0)
 
     if shares > 0.0:
-        last_close = df["Close"].iloc[-1]
-        sell_price = last_close * (1 - slippage_rate)
+        last_close = close_arr[-1]
+        sell_price = last_close * (1.0 - slippage_rate)
         gross_cash = shares * sell_price
         commission = gross_cash * commission_rate
         net_returned_cash = gross_cash - commission
 
         pnl = net_returned_cash - entry_cost
-        pnl_pct = (pnl / (entry_cost + 1e-9)) * 100
+        pnl_pct = (pnl / (entry_cost + 1e-9)) * 100.0
 
         cash += net_returned_cash
         duration_days = (
-            (df.index[-1] - entry_date).days
-            if hasattr(df.index[-1] - entry_date, "days")
+            (pd.Timestamp(dates[-1]) - pd.Timestamp(entry_date)).days
+            if entry_date is not None
             else len(df)
         )
 
         trade_log.append(
             {
                 "Entry_Date": entry_date,
-                "Exit_Date": df.index[-1],
+                "Exit_Date": dates[-1],
                 "Entry_Price": entry_price,
                 "Exit_Price": sell_price,
                 "PnL": pnl,

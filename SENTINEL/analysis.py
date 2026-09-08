@@ -4,7 +4,7 @@ import pandas as pd
 
 def _kalman_loop(prices: np.ndarray, r_variances: np.ndarray, q_variances: np.ndarray) -> np.ndarray:
     n = len(prices)
-    kalman_estimates = np.zeros(n, dtype=np.float64)
+    kalman_estimates = np.zeros(n, dtype=np.float32)
     if n == 0:
         return kalman_estimates
 
@@ -93,11 +93,25 @@ def add_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
     return df
 
 
+def get_robust_zscore(series: pd.Series, window: int = 20) -> pd.Series:
+
+    rolling_median = series.rolling(window=window).median()
+    q75 = series.rolling(window=window).quantile(0.75)
+    q25 = series.rolling(window=window).quantile(0.25)
+    iqr = q75 - q25
+
+    robust_zscore = (series - rolling_median) / (iqr / 1.349 + 1e-9)
+    return robust_zscore.fillna(0.0)
+
+
 def get_dynamic_margin(df: pd.DataFrame, window: int = 20) -> pd.Series:
     sma_col = f"SMA_{window}" if f"SMA_{window}" in df.columns else "Close"
-    std_dev = df["Close"].rolling(window=window).std()
 
-    margin = std_dev / (df[sma_col] + 1e-9) if sma_col in df.columns else std_dev / (df["Close"] + 1e-9)
+    q75 = df["Close"].rolling(window=window).quantile(0.75)
+    q25 = df["Close"].rolling(window=window).quantile(0.25)
+    robust_std = (q75 - q25) / 1.349
+
+    margin = robust_std / (df[sma_col] + 1e-9)
     return margin.clip(0.01, 0.05)
 
 
@@ -120,9 +134,8 @@ def generate_signals(
 ) -> pd.DataFrame:
     df = df.copy()
     sma_col = f"SMA_{window}"
-    vol_sma_col = f"Vol_SMA_{window}"
 
-    if sma_col not in df.columns or vol_sma_col not in df.columns:
+    if sma_col not in df.columns:
         df = calculate_moving_average(df, window=window)
 
     if "RSI" not in df.columns:
@@ -141,9 +154,8 @@ def generate_signals(
     kalman_dev = (df["Kalman"] - df["Close"]) / (df["Close"] + 1e-9)
     kalman_score = np.clip(kalman_dev * 50.0, -1.0, 1.0)
 
-    vol_std = df["Volume"].rolling(window=window).std().fillna(1.0)
-    vol_zscore = (df["Volume"] - df[vol_sma_col]) / (vol_std + 1e-9)
-    volume_score = np.clip(vol_zscore / 3.0, 0.0, 1.0)
+    vol_robust_zscore = get_robust_zscore(df["Volume"], window=window)
+    volume_score = np.clip(vol_robust_zscore / 3.0, 0.0, 1.0)
 
     if "AI_Probability" in df.columns:
         ai_score = (df["AI_Probability"] - 0.5) * 2.0

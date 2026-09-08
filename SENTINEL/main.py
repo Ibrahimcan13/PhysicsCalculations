@@ -131,7 +131,7 @@ def run_sentinel():
         df = calculate_average_true_range(df, window=14)
         df = add_bollinger_bands(df, window=window_size, num_std=2.0)
 
-        logging.info("Executing Walk-Forward AI Training & Inference Pipeline...")
+        logging.info("Executing Walk-Forward AI Training & Inference Pipeline (Triple Barrier Method)...")
         df = train_and_predict(
             df,
             forecast_days=forecast_days,
@@ -185,7 +185,8 @@ def run_sentinel():
         else:
             print("AI FORECAST            : Insufficient data for prediction window.")
 
-        logging.info("Rendering signals & portfolio performance plot...")
+        logging.info("Rendering Plotly Interactive Dashboard...")
+        save_filename = f"{user_ticker}_sentinel_report.html"
         plot_signals(
             df,
             ticker=user_ticker,
@@ -193,7 +194,8 @@ def run_sentinel():
             metrics=metrics,
             trade_log=trade_log,
             train_window=train_window,
-            initial_capital=initial_capital
+            initial_capital=initial_capital,
+            save_path=save_filename
         )
 
     except KeyboardInterrupt:

@@ -25,7 +25,6 @@ def _normalize_yfinance_columns(df: pd.DataFrame, ticker: str = "") -> pd.DataFr
 
 
 def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
-
     if df.empty:
         return df
 
@@ -38,11 +37,13 @@ def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df.index.dayofweek < 5]
     df = df.dropna(how="all")
 
+    float_cols = df.select_dtypes(include=['float64']).columns
+    df[float_cols] = df[float_cols].astype('float32')
+
     return df
 
 
 def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-
     if df1.empty or df2.empty:
         return df1, df2
 
