@@ -105,7 +105,8 @@ def train_and_predict(
         df: pd.DataFrame,
         forecast_days: int = 5,
         train_window: int = 200,
-        retrain_step: int = 20
+        retrain_step: int = 20,
+        use_warm_start: bool = True
 ) -> pd.DataFrame:
     processed_df = create_features_and_targets(df, forecast_days=forecast_days)
 
@@ -124,13 +125,16 @@ def train_and_predict(
     current_model = None
     scaler = None
 
+    initial_trees = 30
+    inc_trees = 5
+    max_trees = 100
+
     for i in range(train_window + forecast_days, len(processed_df)):
         if (i - (train_window + forecast_days)) % retrain_step == 0 or current_model is None:
             train_end_idx = i - forecast_days
             train_start_idx = train_end_idx - train_window
 
             train_chunk = processed_df.iloc[train_start_idx:train_end_idx]
-
             train_chunk_clean = train_chunk.dropna(subset=["Target_Direction"])
 
             if len(train_chunk_clean) < 30:
@@ -142,15 +146,21 @@ def train_and_predict(
             scaler = RobustScaler()
             X_train_scaled = scaler.fit_transform(X_train)
 
-            current_model = RandomForestClassifier(
-                n_estimators=50,
-                max_depth=5,
-                min_samples_leaf=5,
-                class_weight="balanced",
-                n_jobs=-1,
-                random_state=42
-            )
-            current_model.fit(X_train_scaled, y_train)
+            if use_warm_start and current_model is not None:
+                if current_model.n_estimators < max_trees:
+                    current_model.n_estimators += inc_trees
+                current_model.fit(X_train_scaled, y_train)
+            else:
+                current_model = RandomForestClassifier(
+                    n_estimators=initial_trees if use_warm_start else 50,
+                    max_depth=5,
+                    min_samples_leaf=5,
+                    class_weight="balanced",
+                    warm_start=use_warm_start,
+                    n_jobs=-1,
+                    random_state=42
+                )
+                current_model.fit(X_train_scaled, y_train)
 
         X_test = processed_df.iloc[[i]][feature_cols]
         X_test_scaled = scaler.transform(X_test)
@@ -161,6 +171,6 @@ def train_and_predict(
 
     print(
         f"[Sentinel] Purged Walk-Forward with Triple Barrier Labels & Robust Scaling "
-        f"(Gap: {forecast_days}d, Window: {train_window}d, Retrain Step: {retrain_step}d)."
+        f"(Warm Start: {use_warm_start}, Gap: {forecast_days}d, Window: {train_window}d, Retrain Step: {retrain_step}d)."
     )
     return processed_df

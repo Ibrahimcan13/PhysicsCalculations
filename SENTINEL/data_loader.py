@@ -51,22 +51,6 @@ def clean_market_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def align_market_data(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if df1.empty or df2.empty:
-        return df1, df2
-
-    common_dates = df1.index.intersection(df2.index)
-
-    if common_dates.empty:
-        print("[Warning] No common UTC dates found between the provided DataFrames.")
-        return pd.DataFrame(), pd.DataFrame()
-
-    df1_aligned = df1.loc[common_dates].copy()
-    df2_aligned = df2.loc[common_dates].copy()
-
-    return df1_aligned, df2_aligned
-
-
 def save_data_to_parquet(
         df: pd.DataFrame, ticker: str, filename: str = None, folder: str = "data") -> str:
     if df.empty:
@@ -83,8 +67,8 @@ def save_data_to_parquet(
 
         filepath = os.path.join(folder, filename)
 
-        df.to_parquet(filepath, compression="snappy")
-        print(f"[Sentinel] Data successfully cached locally at: {filepath}")
+        df.to_parquet(filepath, compression="zstd", engine="pyarrow")
+        print(f"[Sentinel] Data successfully cached with ZSTD compression: {filepath}")
         return filepath
 
     except Exception as e:
@@ -100,7 +84,7 @@ def load_local_data(filename: str, folder: str = "data") -> pd.DataFrame:
 
     try:
         if os.path.exists(filepath):
-            df = pd.read_parquet(filepath)
+            df = pd.read_parquet(filepath, engine="pyarrow")
             return clean_market_data(df)
         else:
             return pd.DataFrame()
@@ -130,7 +114,7 @@ def _fetch_single_ticker(ticker: str, start_date: str, end_date: str, folder: st
     filename = f"{cache_key}.parquet"
     local_df = load_local_data(filename, folder=folder)
     if not local_df.empty:
-        print(f"[Sentinel] [Disk Cache Hit] Loaded {ticker} from local Parquet storage ({filename}).")
+        print(f"[Sentinel] [Disk Cache Hit] Loaded {ticker} from local ZSTD Parquet storage.")
         _manage_memory_cache(cache_key, local_df)
         return local_df
 
@@ -162,7 +146,8 @@ def fetch_market_data(
         tickers: str | list[str],
         start_date: str = None,
         end_date: str = None,
-        folder: str = "data"
+        folder: str = "data",
+        combine_into_single_df: bool = False
 ) -> pd.DataFrame | dict[str, pd.DataFrame]:
     if end_date is None:
         end_date = datetime.now().strftime("%Y-%m-%d")
@@ -186,5 +171,10 @@ def fetch_market_data(
         df = _fetch_single_ticker(ticker, start_date, end_date, folder=folder)
         if not df.empty:
             results[ticker] = df
+
+    if combine_into_single_df and results:
+        close_series = [df['Close'].rename(ticker) for ticker, df in results.items()]
+        combined_df = pd.concat(close_series, axis=1)
+        return combined_df
 
     return results

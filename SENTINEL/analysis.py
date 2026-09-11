@@ -41,8 +41,11 @@ def calculate_average_true_range(df: pd.DataFrame, window: int = 14) -> pd.DataF
     return df
 
 
-def add_kalman_filter(df: pd.DataFrame, base_process_variance: float = 1e-5,
-                      base_measurement_variance: float = 1e-3) -> pd.DataFrame:
+def add_kalman_filter(
+        df: pd.DataFrame,
+        base_process_variance: float = 1e-5,
+        base_measurement_variance: float = 1e-3
+) -> pd.DataFrame:
     if df.empty or "Close" not in df.columns:
         return df
 
@@ -94,7 +97,6 @@ def add_rsi(df: pd.DataFrame, window: int = 14) -> pd.DataFrame:
 
 
 def get_robust_zscore(series: pd.Series, window: int = 20) -> pd.Series:
-
     rolling_median = series.rolling(window=window).median()
     q75 = series.rolling(window=window).quantile(0.75)
     q25 = series.rolling(window=window).quantile(0.25)
@@ -130,7 +132,8 @@ def generate_signals(
         df: pd.DataFrame,
         window: int = 20,
         buy_threshold: float = 0.65,
-        sell_threshold: float = -0.65
+        sell_threshold: float = -0.65,
+        use_kalman: bool = True
 ) -> pd.DataFrame:
     df = df.copy()
     sma_col = f"SMA_{window}"
@@ -141,7 +144,7 @@ def generate_signals(
     if "RSI" not in df.columns:
         df = add_rsi(df)
 
-    if "Kalman" not in df.columns:
+    if use_kalman and "Kalman" not in df.columns:
         df = add_kalman_filter(df)
 
     margins = get_dynamic_margin(df, window)
@@ -151,8 +154,11 @@ def generate_signals(
 
     rsi_score = np.clip((50.0 - df["RSI"]) / 20.0, -1.0, 1.0)
 
-    kalman_dev = (df["Kalman"] - df["Close"]) / (df["Close"] + 1e-9)
-    kalman_score = np.clip(kalman_dev * 50.0, -1.0, 1.0)
+    if use_kalman and "Kalman" in df.columns:
+        kalman_dev = (df["Kalman"] - df["Close"]) / (df["Close"] + 1e-9)
+        kalman_score = np.clip(kalman_dev * 50.0, -1.0, 1.0)
+    else:
+        kalman_score = 0.0
 
     vol_robust_zscore = get_robust_zscore(df["Volume"], window=window)
     volume_score = np.clip(vol_robust_zscore / 3.0, 0.0, 1.0)
@@ -162,13 +168,23 @@ def generate_signals(
     else:
         ai_score = 0.0
 
+    weights = {
+        "price": 0.25,
+        "rsi": 0.25,
+        "kalman": 0.20 if use_kalman else 0.0,
+        "volume": 0.15,
+        "ai": 0.15
+    }
+
+    total_weight = sum(weights.values())
+
     composite_score = (
-            0.25 * price_score +
-            0.25 * rsi_score +
-            0.20 * kalman_score +
-            0.15 * volume_score +
-            0.15 * ai_score
-    )
+        weights["price"] * price_score +
+        weights["rsi"] * rsi_score +
+        weights["kalman"] * kalman_score +
+        weights["volume"] * volume_score +
+        weights["ai"] * ai_score
+    ) / total_weight
 
     df["Signal_Score"] = composite_score
 

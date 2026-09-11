@@ -12,7 +12,6 @@ def calculate_backtest_metrics(
     winning_trades = sum(1 for t in trade_log if t["PnL"] > 0)
 
     win_rate = (winning_trades / total_trades * 100.0) if total_trades > 0 else 0.0
-
     total_pnl = equity_series.iloc[-1] - initial_capital if not equity_series.empty else 0.0
 
     equity_arr = equity_series.to_numpy(dtype=np.float64)
@@ -102,6 +101,7 @@ def run_backtest(
     dates = df.index.to_numpy()
     close_arr = df["Close"].to_numpy(dtype=np.float64)
     high_arr = df["High"].to_numpy(dtype=np.float64)
+    low_arr = df["Low"].to_numpy(dtype=np.float64)
     signal_arr = df["Signal"].to_numpy(dtype=np.int8)
 
     ai_prob_arr = (
@@ -117,11 +117,12 @@ def run_backtest(
     )
 
     cash = initial_capital
-    shares = 0.0
+    position = 0.0
     entry_price = 0.0
     entry_cost = 0.0
     entry_date = None
-    highest_price_since_entry = 0.0
+    peak_price_since_entry = 0.0
+    trough_price_since_entry = 0.0
 
     trade_log = []
     equity_list = np.zeros(len(df), dtype=np.float64)
@@ -130,125 +131,194 @@ def run_backtest(
         current_date = dates[i]
         current_close = close_arr[i]
         current_high = high_arr[i]
+        current_low = low_arr[i]
         signal = signal_arr[i]
         ai_prob = ai_prob_arr[i]
         atr_val = atr_arr[i]
 
-        if shares > 0.0:
-            highest_price_since_entry = max(highest_price_since_entry, current_high)
-
+        if position > 0.0:
+            peak_price_since_entry = max(peak_price_since_entry, current_high)
             stop_loss_price = (
-                highest_price_since_entry - (atr_val * atr_multiplier)
+                peak_price_since_entry - (atr_val * atr_multiplier)
                 if use_atr_stop and not np.isnan(atr_val)
                 else 0.0
             )
 
             hit_stop_loss = use_atr_stop and (current_close <= stop_loss_price)
-            ai_bearish_exit = (
-                    not np.isnan(ai_prob) and (ai_prob < ai_exit_threshold)
-            )
-            standard_sell_signal = (signal == -1)
+            ai_bearish_exit = not np.isnan(ai_prob) and (ai_prob < ai_exit_threshold)
+            sell_signal = (signal == -1)
 
-            if hit_stop_loss or ai_bearish_exit or standard_sell_signal:
+            if hit_stop_loss or ai_bearish_exit or sell_signal:
                 sell_price = current_close * (1.0 - slippage_rate)
-                gross_cash = shares * sell_price
+                gross_cash = position * sell_price
                 commission = gross_cash * commission_rate
                 net_returned_cash = gross_cash - commission
 
                 pnl = net_returned_cash - entry_cost
                 pnl_pct = (pnl / (entry_cost + 1e-9)) * 100.0
-
                 cash += net_returned_cash
 
                 duration_days = (
                     (pd.Timestamp(current_date) - pd.Timestamp(entry_date)).days
-                    if entry_date is not None
-                    else 0
+                    if entry_date is not None else 0
                 )
 
-                reason = "SELL Signal"
+                reason = "LONG Exit (SELL)"
                 if hit_stop_loss:
-                    reason = "ATR Stop Loss"
+                    reason = "LONG ATR Stop Loss"
                 elif ai_bearish_exit:
-                    reason = "AI Bearish Exit"
+                    reason = "LONG AI Bearish Exit"
 
-                trade_log.append(
-                    {
-                        "Entry_Date": entry_date,
-                        "Exit_Date": current_date,
-                        "Entry_Price": entry_price,
-                        "Exit_Price": sell_price,
-                        "PnL": pnl,
-                        "PnL_Pct": pnl_pct,
-                        "Duration_Days": duration_days,
-                        "Reason": reason,
-                    }
-                )
+                trade_log.append({
+                    "Type": "LONG",
+                    "Entry_Date": entry_date,
+                    "Exit_Date": current_date,
+                    "Entry_Price": entry_price,
+                    "Exit_Price": sell_price,
+                    "PnL": pnl,
+                    "PnL_Pct": pnl_pct,
+                    "Duration_Days": duration_days,
+                    "Reason": reason,
+                })
 
-                shares = 0.0
+                position = 0.0
                 entry_price = 0.0
                 entry_cost = 0.0
                 entry_date = None
-                highest_price_since_entry = 0.0
 
-        elif shares == 0.0 and signal == 1:
-            buy_price = current_close * (1.0 + slippage_rate)
+        elif position < 0.0:
+            trough_price_since_entry = min(trough_price_since_entry, current_low)
+            stop_loss_price = (
+                trough_price_since_entry + (atr_val * atr_multiplier)
+                if use_atr_stop and not np.isnan(atr_val)
+                else float("inf")
+            )
 
-            if atr_val > 0.0 and use_atr_stop:
-                risk_amount = cash * risk_per_trade
-                stop_distance = atr_val * atr_multiplier
-                raw_shares = risk_amount / (stop_distance + 1e-9)
+            hit_stop_loss = use_atr_stop and (current_close >= stop_loss_price)
+            ai_bullish_exit = not np.isnan(ai_prob) and (ai_prob > (1.0 - ai_exit_threshold))
+            buy_signal = (signal == 1)
 
-                allocated_cash = min(cash * 0.95, raw_shares * buy_price)
-            else:
-                allocated_cash = cash * 0.10
+            if hit_stop_loss or ai_bullish_exit or buy_signal:
+                cover_price = current_close * (1.0 + slippage_rate)
+                buyback_cost = abs(position) * cover_price
+                commission = buyback_cost * commission_rate
+                total_exit_cost = buyback_cost + commission
 
-            commission = allocated_cash * commission_rate
-            investable_cash = allocated_cash - commission
+                pnl = entry_cost - total_exit_cost
+                pnl_pct = (pnl / (entry_cost + 1e-9)) * 100.0
+                cash += (entry_cost + pnl)
 
-            shares = investable_cash / buy_price
-            entry_price = buy_price
-            entry_cost = allocated_cash
-            entry_date = current_date
-            highest_price_since_entry = current_close
-            cash -= allocated_cash
+                duration_days = (
+                    (pd.Timestamp(current_date) - pd.Timestamp(entry_date)).days
+                    if entry_date is not None else 0
+                )
 
-        equity_list[i] = cash + (shares * current_close if shares > 0.0 else 0.0)
+                reason = "SHORT Exit (COVER)"
+                if hit_stop_loss:
+                    reason = "SHORT ATR Stop Loss"
+                elif ai_bullish_exit:
+                    reason = "SHORT AI Bullish Exit"
 
-    if shares > 0.0:
+                trade_log.append({
+                    "Type": "SHORT",
+                    "Entry_Date": entry_date,
+                    "Exit_Date": current_date,
+                    "Entry_Price": entry_price,
+                    "Exit_Price": cover_price,
+                    "PnL": pnl,
+                    "PnL_Pct": pnl_pct,
+                    "Duration_Days": duration_days,
+                    "Reason": reason,
+                })
+
+                position = 0.0
+                entry_price = 0.0
+                entry_cost = 0.0
+                entry_date = None
+
+        if position == 0.0:
+            if signal == 1:
+                buy_price = current_close * (1.0 + slippage_rate)
+                if atr_val > 0.0 and use_atr_stop:
+                    risk_amount = cash * risk_per_trade
+                    stop_distance = atr_val * atr_multiplier
+                    raw_shares = risk_amount / (stop_distance + 1e-9)
+                    allocated_cash = min(cash * 0.95, raw_shares * buy_price)
+                else:
+                    allocated_cash = cash * 0.10
+
+                commission = allocated_cash * commission_rate
+                investable_cash = allocated_cash - commission
+
+                position = investable_cash / buy_price
+                entry_price = buy_price
+                entry_cost = allocated_cash
+                entry_date = current_date
+                peak_price_since_entry = current_close
+                cash -= allocated_cash
+
+            elif signal == -1:
+                short_price = current_close * (1.0 - slippage_rate)
+                if atr_val > 0.0 and use_atr_stop:
+                    risk_amount = cash * risk_per_trade
+                    stop_distance = atr_val * atr_multiplier
+                    raw_shares = risk_amount / (stop_distance + 1e-9)
+                    allocated_cash = min(cash * 0.95, raw_shares * short_price)
+                else:
+                    allocated_cash = cash * 0.10
+
+                commission = allocated_cash * commission_rate
+                investable_cash = allocated_cash - commission
+
+                position = -(investable_cash / short_price)
+                entry_price = short_price
+                entry_cost = allocated_cash
+                entry_date = current_date
+                trough_price_since_entry = current_close
+                cash -= allocated_cash
+
+        if position > 0.0:
+            current_equity = cash + (position * current_close)
+        elif position < 0.0:
+            unrealized_pnl = (entry_price - current_close) * abs(position)
+            current_equity = cash + entry_cost + unrealized_pnl
+        else:
+            current_equity = cash
+
+        equity_list[i] = current_equity
+
+    if position != 0.0:
         last_close = close_arr[-1]
-        sell_price = last_close * (1.0 - slippage_rate)
-        gross_cash = shares * sell_price
-        commission = gross_cash * commission_rate
-        net_returned_cash = gross_cash - commission
+        if position > 0.0:
+            sell_price = last_close * (1.0 - slippage_rate)
+            gross_cash = position * sell_price
+            commission = gross_cash * commission_rate
+            pnl = (gross_cash - commission) - entry_cost
+            pnl_pct = (pnl / (entry_cost + 1e-9)) * 100.0
+            cash += (gross_cash - commission)
+            p_type = "LONG"
+        else:
+            cover_price = last_close * (1.0 + slippage_rate)
+            buyback_cost = abs(position) * cover_price
+            commission = buyback_cost * commission_rate
+            pnl = entry_cost - (buyback_cost + commission)
+            pnl_pct = (pnl / (entry_cost + 1e-9)) * 100.0
+            cash += (entry_cost + pnl)
+            p_type = "SHORT"
 
-        pnl = net_returned_cash - entry_cost
-        pnl_pct = (pnl / (entry_cost + 1e-9)) * 100.0
-
-        cash += net_returned_cash
-        duration_days = (
-            (pd.Timestamp(dates[-1]) - pd.Timestamp(entry_date)).days
-            if entry_date is not None
-            else len(df)
-        )
-
-        trade_log.append(
-            {
-                "Entry_Date": entry_date,
-                "Exit_Date": dates[-1],
-                "Entry_Price": entry_price,
-                "Exit_Price": sell_price,
-                "PnL": pnl,
-                "PnL_Pct": pnl_pct,
-                "Duration_Days": duration_days,
-                "Reason": "End of Data (Auto Close)",
-            }
-        )
-        shares = 0.0
+        trade_log.append({
+            "Type": p_type,
+            "Entry_Date": entry_date,
+            "Exit_Date": dates[-1],
+            "Entry_Price": entry_price,
+            "Exit_Price": last_close,
+            "PnL": pnl,
+            "PnL_Pct": pnl_pct,
+            "Duration_Days": (pd.Timestamp(dates[-1]) - pd.Timestamp(entry_date)).days if entry_date is not None else 0,
+            "Reason": "End of Data (Auto Close)",
+        })
+        position = 0.0
         equity_list[-1] = cash
-        print(
-            f"[Sentinel] Auto-closed open position at last available price: ${last_close:.2f} (PnL: ${pnl:.2f})"
-        )
 
     equity_series = pd.Series(equity_list, index=df.index)
     df["Portfolio_Equity"] = equity_series

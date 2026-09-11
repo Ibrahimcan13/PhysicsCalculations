@@ -1,7 +1,14 @@
+import os
+
+os.environ["SKLEARN_ASSUME_FINITE"] = "true"
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+
 import logging
 import traceback
 from datetime import datetime
 import pandas as pd
+import yaml
 
 from analysis import (
     add_bollinger_bands,
@@ -23,6 +30,15 @@ logging.basicConfig(
 )
 
 
+def load_config(config_path: str = "config.yaml") -> dict:
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        logging.error(f"Failed to load config file ({config_path}): {e}")
+        raise e
+
+
 def get_valid_date(prompt: str) -> datetime:
     while True:
         date_str = input(prompt).strip()
@@ -33,63 +49,33 @@ def get_valid_date(prompt: str) -> datetime:
             logging.error("Invalid format! Please use YYYY-MM-DD (e.g., 2026-01-01).")
 
 
-def get_valid_window_size(prompt: str, default: int, min_val: int = 1) -> int:
-    window_str = input(
-        f"{prompt} [Press Enter for Default: {default}]: "
-    ).strip()
-
-    if not window_str:
-        logging.info(f"Using default size: {default}.")
-        return default
-
-    if window_str.isdigit() and int(window_str) >= min_val:
-        window_size = int(window_str)
-        logging.info(f"Window size set to: {window_size}.")
-        return window_size
-    else:
-        logging.warning(f"Invalid input (Must be >= {min_val}). Falling back to default: {default}.")
-        return default
-
-
-def get_valid_float(prompt: str, default: float) -> float:
-    val_str = input(f"{prompt} [Press Enter for Default: ${default:.2f}]: ").strip()
-    if not val_str:
-        logging.info(f"Using default initial capital: ${default:.2f}")
-        return default
-    try:
-        val = float(val_str)
-        if val > 0:
-            logging.info(f"Initial capital set to: ${val:.2f}")
-            return val
-        else:
-            logging.warning(f"Must be greater than 0. Using default: ${default:.2f}")
-            return default
-    except ValueError:
-        logging.warning(f"Invalid number. Using default: ${default:.2f}")
-        return default
-
-
 def run_sentinel():
     print("           PROJECT SENTINEL             ")
 
+    cfg = load_config("config.yaml")
+
+    data_cfg = cfg.get("data", {})
+    analysis_cfg = cfg.get("analysis", {})
+    ml_cfg = cfg.get("machine_learning", {})
+    bt_cfg = cfg.get("backtest", {})
+
     try:
-        user_ticker = input("Enter asset ticker (e.g., RACE, AAPL): ").strip().upper()
+        # Ticker Selection
+        default_ticker = data_cfg.get("default_ticker", "RACE")
+        user_ticker = input(f"Enter asset ticker [Default: {default_ticker}]: ").strip().upper()
         if not user_ticker:
-            logging.error("Ticker cannot be empty. Aborting.")
-            return
+            user_ticker = default_ticker
 
-        print("\n[Configuration]")
-        initial_capital = get_valid_float("Enter starting capital in USD", default=1000.0)
-        window_size = get_valid_window_size("Enter analysis SMA window size in days", default=20)
-        rsi_window = get_valid_window_size("Enter RSI window size in days", default=14)
+        initial_capital = bt_cfg.get("initial_capital", 1000.0)
+        window_size = analysis_cfg.get("window_size", 20)
+        rsi_window = analysis_cfg.get("rsi_window", 14)
+        atr_window = analysis_cfg.get("atr_window", 14)
+        bollinger_std = analysis_cfg.get("bollinger_std", 2.0)
+        use_kalman = analysis_cfg.get("use_kalman", True)
 
-        train_window = get_valid_window_size(
-            "Enter AI Training Window size (bars/days)", default=200, min_val=100
-        )
-
-        forecast_days = 5
-        retrain_step = 20
-        risk_per_trade = 0.02
+        train_window = ml_cfg.get("train_window", 200)
+        forecast_days = ml_cfg.get("forecast_days", 5)
+        retrain_step = ml_cfg.get("retrain_step", 20)
 
         print("\n[Date Configuration]")
         today = datetime.now()
@@ -125,20 +111,21 @@ def run_sentinel():
             return
 
         logging.info("Calculating technical indicators & Kalman Filter...")
-        df = add_kalman_filter(df)
+        if use_kalman:
+            df = add_kalman_filter(df)
+
         df = calculate_moving_average(df, window=window_size)
         df = add_rsi(df, window=rsi_window)
-        df = calculate_average_true_range(df, window=14)
-        df = add_bollinger_bands(df, window=window_size, num_std=2.0)
+        df = calculate_average_true_range(df, window=atr_window)
+        df = add_bollinger_bands(df, window=window_size, num_std=bollinger_std)
 
-        logging.info("Generating Baseline Trading Signals (Kalman & Technical Based)...")
+        logging.info("Generating Baseline Trading Signals...")
         try:
-            df = generate_signals(df, window=window_size, use_kalman=True)
+            df = generate_signals(df, window=window_size, use_kalman=use_kalman)
         except TypeError:
             df = generate_signals(df, window=window_size)
 
-
-        logging.info("Executing Walk-Forward AI Training & Inference Pipeline (Triple Barrier Method)...")
+        logging.info("Executing Walk-Forward AI Training & Inference Pipeline...")
         df = train_and_predict(
             df,
             forecast_days=forecast_days,
@@ -150,12 +137,12 @@ def run_sentinel():
         df, trade_log, metrics = run_backtest(
             df,
             initial_capital=initial_capital,
-            risk_per_trade=risk_per_trade,
-            commission_rate=0.001,
-            slippage_rate=0.0005,
-            use_atr_stop=True,
-            atr_multiplier=2.0,
-            ai_exit_threshold=0.50
+            risk_per_trade=bt_cfg.get("risk_per_trade", 0.02),
+            commission_rate=bt_cfg.get("commission_rate", 0.001),
+            slippage_rate=bt_cfg.get("slippage_rate", 0.0005),
+            use_atr_stop=bt_cfg.get("use_atr_stop", True),
+            atr_multiplier=bt_cfg.get("atr_multiplier", 2.0),
+            ai_exit_threshold=bt_cfg.get("ai_exit_threshold", 0.50)
         )
 
         save_data_to_parquet(df, ticker=user_ticker)
@@ -171,7 +158,8 @@ def run_sentinel():
         print(f"Target Asset       : {user_ticker}")
         print(f"Starting Capital   : ${initial_capital:.2f}")
         print(f"Latest Close Price : ${latest_price:.2f}")
-        print(f"Analysis Pipeline  : Kalman | SMA {window_size}d | RSI {rsi_window}d | ATR 14d")
+        print(
+            f"Analysis Pipeline  : Kalman ({use_kalman}) | SMA {window_size}d | RSI {rsi_window}d | ATR {atr_window}d")
         print(f"Total Trades       : {metrics.get('total_trades', 0)}")
         print(f"Winning Trades     : {metrics.get('winning_trades', 0)}")
         print(f"Win Rate           : %{metrics.get('win_rate', 0.0):.1f}")
